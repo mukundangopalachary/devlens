@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.dmypy.json
+dmypy.json
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Local databases and runtime state
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.pid
+*.log
+logs/
+tmp/
+
+# Alembic / migration leftovers
+*.pyc.*
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local model, cache, and generated data
+data/
+artifacts/
+cache/
+models/
+embeddings/
+chroma/
+qdrant_storage/
+ollama_data/
+
+# Test outputs
+test-results/
+reports/
+
+# Project-local agent/tooling noise
+.codex/
+

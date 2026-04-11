@@ -209,13 +209,16 @@ To build a self-evolving AI system that models a developer’s technical abiliti
 
 ## 11. Tech Stack (Initial)
 
-| Layer         | Technology             |
-| ------------- | ---------------------- |
-| LLM           | Ollama + Qwen2.5-Coder |
-| Backend       | FastAPI                |
-| Database      | PostgreSQL             |
-| Vector DB     | Chroma (future)        |
-| Orchestration | Docker                 |
+| Layer         | Technology                                |
+| ------------- | ----------------------------------------- |
+| Runtime       | Python 3.12                               |
+| CLI           | Typer                                     |
+| LLM           | Ollama + quantized coder model (7B class) |
+| Database      | SQLite + SQLAlchemy                       |
+| Migrations    | Alembic                                   |
+| Static Analysis | ast / libcst / radon                    |
+| Tooling       | uv + Ruff + Pytest + MyPy                 |
+| Orchestration | None for Phase 1 (Docker optional later)  |
 
 ---
 
@@ -245,4 +248,3 @@ To build a self-evolving AI system that models a developer’s technical abiliti
 ---
 
 END OF DOCUMENT
-

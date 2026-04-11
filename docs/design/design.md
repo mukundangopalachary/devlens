@@ -110,7 +110,7 @@ JSON-like structured data
 
 **Storage:**
 
-- PostgreSQL
+- SQLite via SQLAlchemy
 
 ---
 
@@ -194,13 +194,14 @@ Observe → Analyze → Extract → Update → Generate → Store
 ### 7.1 Local Setup
 
 - Runs entirely on local machine
-- Uses Docker Compose (optional)
+- CLI-first modular monolith
+- Docker optional later for reproducibility
 
-### 7.2 Services
+### 7.2 Runtime Components
 
+- CLI application (Typer)
 - LLM runtime (Ollama)
-- Backend service (FastAPI)
-- Database (PostgreSQL)
+- Local database (SQLite)
 
 ---
 
