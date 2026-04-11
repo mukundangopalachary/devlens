@@ -26,5 +26,4 @@ Run CLI:
 uv run devlens --help
 ```
 
-Architecture blueprint: [docs/apt/blueprint.md](docs/apt/blueprint.md)
-
+Architecture blueprint: [docs/blueprint/blueprint.md](docs/blueprint/blueprint.md)
