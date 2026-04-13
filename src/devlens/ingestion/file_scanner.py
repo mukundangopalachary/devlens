@@ -40,14 +40,27 @@ def scan_python_files(target_path: Path) -> list[FileScanResult]:
     return build_scan_results(files=files, project_root=project_root)
 
 
-def scan_specific_files(file_paths: list[Path]) -> list[FileScanResult]:
+def scan_specific_files(
+    file_paths: list[Path],
+    include_all_extensions: bool = False,
+) -> list[FileScanResult]:
     settings = get_settings()
     project_root = settings.resolved_project_root
-    safe_files = [
-        ensure_within_root(file_path, project_root)
-        for file_path in file_paths
-        if file_path.suffix in settings.allowed_extensions and not _is_ignored(file_path)
-    ]
+    safe_files: list[Path] = []
+    for raw_path in file_paths:
+        candidate = _normalize_cli_path(raw_path)
+        safe_path = ensure_within_root(candidate, project_root)
+        if not safe_path.exists() or not safe_path.is_file():
+            continue
+        if _is_ignored(safe_path):
+            continue
+        if not _is_extension_allowed(
+            safe_path,
+            settings.allowed_extensions,
+            include_all_extensions=include_all_extensions,
+        ):
+            continue
+        safe_files.append(safe_path)
     return build_scan_results(files=safe_files, project_root=project_root)
 
 
@@ -92,3 +105,23 @@ def _build_scan_result(file_path: Path, project_root: Path) -> FileScanResult | 
 
 def _is_ignored(file_path: Path) -> bool:
     return any(part in IGNORED_DIRECTORY_NAMES for part in file_path.parts)
+
+
+def _normalize_cli_path(raw_path: Path) -> Path:
+    raw = str(raw_path)
+    if raw.startswith("@"):
+        normalized = raw[1:]
+        if normalized in {"", ".", "./"}:
+            return Path(".")
+        return Path(normalized)
+    return raw_path
+
+
+def _is_extension_allowed(
+    file_path: Path,
+    allowed_extensions: tuple[str, ...],
+    include_all_extensions: bool,
+) -> bool:
+    if include_all_extensions:
+        return True
+    return file_path.suffix in allowed_extensions

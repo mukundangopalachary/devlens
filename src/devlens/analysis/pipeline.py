@@ -20,6 +20,7 @@ from devlens.storage.repositories.analyses import (
     get_latest_analysis_for_submission,
 )
 from devlens.storage.repositories.feedback import create_feedback_item
+from devlens.storage.repositories.knowledge import regenerate_tasks_for_file
 from devlens.storage.repositories.skills import upsert_skill_assessment
 from devlens.storage.repositories.submissions import (
     create_code_submission,
@@ -41,6 +42,14 @@ def run_static_analysis_for_changed_files(
 ) -> tuple[AnalyzeSummary, list[FileAnalysisResult]]:
     changed_files = get_changed_files(target_path)
     scan_results = scan_specific_files(changed_files)
+    return _run_analysis_for_scan_results(scan_results=scan_results, session=session)
+
+
+def run_static_analysis_for_specific_files(
+    file_paths: list[Path],
+    session: Session,
+) -> tuple[AnalyzeSummary, list[FileAnalysisResult]]:
+    scan_results = scan_specific_files(file_paths)
     return _run_analysis_for_scan_results(scan_results=scan_results, session=session)
 
 
@@ -137,6 +146,12 @@ def _run_analysis_for_scan_results(
                 kind="task",
                 content=task,
             )
+
+        regenerate_tasks_for_file(
+            session=session,
+            file_path=str(scan_result.relative_path),
+            task_texts=feedback.tasks,
+        )
 
     session.commit()
 
