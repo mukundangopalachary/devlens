@@ -70,3 +70,5 @@ reports/
 # Project-local agent/tooling noise
 .codex/
 
+
+./AGENTS.md

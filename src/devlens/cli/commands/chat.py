@@ -7,12 +7,14 @@ import typer
 
 from devlens.chat.service import (
     answer_question,
+    build_session_memory_summary,
     complete_task,
     delete_task,
     get_chat_status_line,
     get_task_lines,
     ingest_files_into_knowledge_base,
     start_chat_session,
+    stream_answer_question,
 )
 from devlens.storage.db import SessionLocal
 
@@ -25,12 +27,20 @@ def chat_command(files: FileArgument | None = None) -> None:
         session_id = start_chat_session(session)
         initial_files = [] if files is None else files
         if initial_files:
-            stored_files = ingest_files_into_knowledge_base(session, initial_files)
+            stored_files = ingest_files_into_knowledge_base(
+                session,
+                initial_files,
+                session_id=session_id,
+            )
             typer.echo(f"[knowledge] loaded {len(stored_files)} file(s)")
 
         typer.echo("DevLens Chat")
-        typer.echo("commands: :add <path>  :tasks  :done <id>  :rm <id>  :help  :exit")
+        typer.echo(
+            "commands: :add <path>  :tasks  :done <id>  :rm <id>  "
+            ":sum  :stream on|off  :help  :exit"
+        )
         typer.echo(get_chat_status_line())
+        streaming_enabled = False
         while True:
             user_input = typer.prompt("you>").strip()
             if not user_input:
@@ -45,8 +55,21 @@ def chat_command(files: FileArgument | None = None) -> None:
                     ":tasks show tasks\n"
                     ":done <id> mark task done\n"
                     ":rm <id> remove task\n"
+                    ":sum print session memory summary\n"
+                    ":stream on|off toggle token stream mode\n"
                     ":exit quit chat"
                 )
+                continue
+            if user_input == ":sum":
+                typer.echo(build_session_memory_summary(session, session_id=session_id))
+                continue
+            if user_input.startswith(":stream "):
+                mode = user_input[8:].strip().lower()
+                if mode in {"on", "off"}:
+                    streaming_enabled = mode == "on"
+                    typer.echo(f"streaming {'enabled' if streaming_enabled else 'disabled'}")
+                else:
+                    typer.echo("usage: :stream on|off")
                 continue
             if user_input == ":tasks":
                 for line in get_task_lines(session):
@@ -75,16 +98,36 @@ def chat_command(files: FileArgument | None = None) -> None:
                 stored_files = ingest_files_into_knowledge_base(
                     session,
                     [Path(item) for item in raw_paths],
+                    session_id=session_id,
                 )
                 typer.echo(f"[knowledge] loaded {len(stored_files)} file(s)")
                 continue
 
-            reply = answer_question(session, session_id=session_id, question=user_input)
-            typer.echo("")
-            typer.echo("agent>")
-            typer.echo(reply.reply)
+            if streaming_enabled:
+                typer.echo("")
+                typer.echo("agent>")
+                _streamed_token_count, reply = stream_answer_question(
+                    session,
+                    session_id=session_id,
+                    question=user_input,
+                    on_token=lambda token: typer.echo(token, nl=False),
+                )
+                typer.echo("")
+                rendered = reply.reply
+            else:
+                reply = answer_question(session, session_id=session_id, question=user_input)
+                rendered = reply.reply
+                typer.echo("")
+                typer.echo("agent>")
+                typer.echo(rendered)
             if reply.matched_chunks:
                 typer.echo(f"[context] {', '.join(reply.matched_chunks)}")
+            if reply.citations:
+                typer.echo(f"[citations] {', '.join(reply.citations)}")
+            if reply.error_reason:
+                typer.echo(f"[error] {reply.error_reason}")
+            if reply.error_code:
+                typer.echo(f"[error_code] {reply.error_code}")
             if reply.fallback_used:
                 typer.echo("[mode] fallback")
             else:

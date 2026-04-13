@@ -93,3 +93,6 @@ class ChatReply(BaseModel):
     reply: str
     fallback_used: bool = False
     matched_chunks: list[str] = Field(default_factory=list)
+    citations: list[str] = Field(default_factory=list)
+    error_reason: str | None = None
+    error_code: str | None = None
