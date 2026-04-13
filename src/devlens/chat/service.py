@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
 
 import ollama
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from devlens.analysis.llm.client import analyze_with_llm
@@ -17,7 +19,9 @@ from devlens.retrieval.qdrant_store import qdrant_available
 from devlens.storage.repositories.chat import (
     add_chat_message,
     create_chat_session,
+    get_session_memory_summary,
     list_recent_messages,
+    set_session_memory_summary,
 )
 from devlens.storage.repositories.knowledge import (
     create_scheduled_task,
@@ -29,8 +33,15 @@ from devlens.storage.repositories.knowledge import (
 )
 
 
-def ingest_files_into_knowledge_base(session: Session, file_paths: list[Path]) -> list[str]:
-    scan_results = scan_specific_files(file_paths)
+def ingest_files_into_knowledge_base(
+    session: Session,
+    file_paths: list[Path],
+    *,
+    session_id: int | None = None,
+) -> list[str]:
+    expanded_paths = _expand_add_paths(file_paths)
+    scan_results = scan_specific_files(expanded_paths, include_all_extensions=True)
+    settings = get_settings()
     stored_files: list[str] = []
     for scan_result in scan_results:
         upsert_knowledge_document(
@@ -39,6 +50,8 @@ def ingest_files_into_knowledge_base(session: Session, file_paths: list[Path]) -
             content_hash=scan_result.content_hash,
             title=scan_result.relative_path.name,
             content=scan_result.content,
+            project_root=str(settings.resolved_project_root),
+            session_id=session_id,
         )
         stored_files.append(str(scan_result.relative_path))
         _schedule_tasks_for_file(session, scan_result.relative_path, scan_result.content)
@@ -54,15 +67,21 @@ def start_chat_session(session: Session) -> int:
 
 def answer_question(session: Session, session_id: int, question: str) -> ChatReply:
     settings = get_settings()
-    chunks = retrieve_relevant_chunks(session, question, limit=2)
-    context = "\n\n".join(
-        f"[{document.file_path}]\n{chunk.content}" for document, chunk, _ in chunks
+    chunks, retrieval_error = _safe_retrieve_relevant_chunks(
+        session,
+        question,
+        project_root=str(settings.resolved_project_root),
+        session_id=session_id,
     )
+    context = _build_context(chunks)
     history = list_recent_messages(session, session_id=session_id, limit=4)
-    history_text = "\n".join(f"{message.role}: {message.content}" for message in history)
+    history_text = _build_history_text(history)
+    memory_summary = build_session_memory_summary(session, session_id=session_id)
     prompt = (
-        "You are DevLens local coding tutor. Answer normal coding questions directly. "
-        "Use provided knowledge base context when relevant. If context weak, say so plainly.\n\n"
+        "You are DevLens local-first engineering coach. "
+        "Give practical, code-aware help. Be explicit when context weak. "
+        "If context supports claims, reference citations exactly as [path#chunk].\n\n"
+        f"Session memory summary:\n{memory_summary}\n\n"
         f"Conversation history:\n{history_text}\n\n"
         f"Knowledge context:\n{context}\n\n"
         f"User question: {question}"
@@ -70,10 +89,14 @@ def answer_question(session: Session, session_id: int, question: str) -> ChatRep
     prompt_hash = build_prompt_hash("chat", settings.ollama_model, prompt)
     cached = get_cached_response(session, prompt_hash, cache_kind="chat")
     if cached is not None:
+        cached_reply = _parse_cached_chat_reply(cached)
         reply = ChatReply(
-            reply=cached,
-            fallback_used=False,
+            reply=str(cached_reply["reply"]),
+            fallback_used=bool(cached_reply["fallback_used"]),
             matched_chunks=_unique_paths(chunks),
+            citations=_citation_labels(chunks),
+            error_reason=retrieval_error,
+            error_code=_classify_error_code(retrieval_error),
         )
         add_chat_message(session, session_id, "user", question)
         add_chat_message(session, session_id, "assistant", reply.reply)
@@ -83,15 +106,26 @@ def answer_question(session: Session, session_id: int, question: str) -> ChatRep
     try:
         response = cast(
             dict[str, Any],
-            ollama.generate(
+            ollama.chat(
                 model=settings.ollama_model,
-                prompt=prompt,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Use citations [path#chunk] when context supports answer.",
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    },
+                ],
                 options={"temperature": 0.2},
+                stream=False,
             ),
         )
-        reply_text = str(response.get("response", "")).strip()
+        reply_text = _extract_chat_text(response)
         if not reply_text:
             raise ValueError("Empty chat response.")
+        reply_text = _enforce_citation_presence(reply_text, _citation_labels(chunks))
         if settings.cache_enabled:
             store_cached_response(
                 session=session,
@@ -99,22 +133,33 @@ def answer_question(session: Session, session_id: int, question: str) -> ChatRep
                 cache_kind="chat",
                 model_name=settings.ollama_model,
                 prompt_text=prompt,
-                response_text=reply_text,
+                response_text=json.dumps(
+                    {"reply": reply_text, "fallback_used": False, "error_code": None},
+                    sort_keys=True,
+                ),
             )
         reply = ChatReply(
             reply=reply_text,
             fallback_used=False,
             matched_chunks=_unique_paths(chunks),
+            citations=_citation_labels(chunks),
+            error_reason=retrieval_error,
+            error_code=_classify_error_code(retrieval_error),
         )
-    except Exception:
+    except Exception as exc:
+        combined_error = _combine_errors(retrieval_error, str(exc))
         reply = ChatReply(
             reply=_fallback_chat_reply(question, chunks),
             fallback_used=True,
             matched_chunks=_unique_paths(chunks),
+            citations=_citation_labels(chunks),
+            error_reason=combined_error,
+            error_code=_classify_error_code(combined_error),
         )
 
     add_chat_message(session, session_id, "user", question)
     add_chat_message(session, session_id, "assistant", reply.reply)
+    _refresh_session_memory_summary(session, session_id=session_id)
     session.commit()
     return reply
 
@@ -229,3 +274,304 @@ def _unique_paths(chunks: Sequence[tuple[object, object, float]]) -> list[str]:
             seen.add(file_path)
             ordered.append(file_path)
     return ordered
+
+
+def _citation_labels(chunks: Sequence[tuple[object, object, float]]) -> list[str]:
+    labels: list[str] = []
+    for document, chunk, _ in chunks:
+        file_path = str(getattr(document, "file_path", ""))
+        chunk_index = int(getattr(chunk, "chunk_index", -1))
+        if file_path and chunk_index >= 0:
+            labels.append(f"{file_path}#chunk{chunk_index}")
+    return labels
+
+
+def _build_history_text(history: Sequence[object], max_chars: int = 1200) -> str:
+    lines = [
+        f"{getattr(message, 'role', 'unknown')}: {getattr(message, 'content', '')}"
+        for message in history
+    ]
+    text = "\n".join(lines)
+    if len(text) <= max_chars:
+        return text
+    return text[-max_chars:]
+
+
+def _build_context(
+    chunks: Sequence[tuple[object, object, float]],
+    *,
+    max_chunks: int = 4,
+    max_chars_per_chunk: int = 700,
+    max_total_chars: int = 2200,
+) -> str:
+    sections: list[str] = []
+    ranked_chunks = sorted(
+        list(chunks),
+        key=lambda item: (
+            float(item[2]),
+            len(str(getattr(item[1], "content", ""))),
+        ),
+        reverse=True,
+    )
+    total = 0
+    seen_signatures: set[str] = set()
+    for document, chunk, _ in ranked_chunks[:max_chunks]:
+        file_path = str(getattr(document, "file_path", ""))
+        chunk_index = int(getattr(chunk, "chunk_index", -1))
+        content = str(getattr(chunk, "content", ""))[:max_chars_per_chunk]
+        signature = f"{file_path}:{content[:120]}"
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        label = f"{file_path}#chunk{chunk_index}" if chunk_index >= 0 else file_path
+        section = f"[{label}]\n{content}"
+        if total + len(section) > max_total_chars:
+            break
+        sections.append(section)
+        total += len(section)
+    return "\n\n".join(sections)
+
+
+def _extract_chat_text(response: dict[str, Any]) -> str:
+    message = response.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str):
+            return content.strip()
+    return str(response.get("response", "")).strip()
+
+
+def _enforce_citation_presence(reply_text: str, citations: Sequence[str]) -> str:
+    if not citations:
+        return reply_text
+    if any(f"[{label}]" in reply_text for label in citations):
+        return reply_text
+    sources = ", ".join(f"[{label}]" for label in citations)
+    return f"{reply_text}\n\nSources: {sources}"
+
+
+def stream_answer_question(
+    session: Session,
+    session_id: int,
+    question: str,
+    *,
+    on_token: Callable[[str], None] | None = None,
+) -> tuple[int, ChatReply]:
+    settings = get_settings()
+    chunks, retrieval_error = _safe_retrieve_relevant_chunks(
+        session,
+        question,
+        project_root=str(settings.resolved_project_root),
+        session_id=session_id,
+    )
+    history_text = _build_history_text(
+        list_recent_messages(session, session_id=session_id, limit=4)
+    )
+    memory_summary = build_session_memory_summary(session, session_id=session_id)
+    context_text = _build_context(chunks)
+    prompt = (
+        "You are DevLens local-first engineering coach. "
+        "Give practical, code-aware help. "
+        "Use citations [path#chunk] when context supports answer.\n\n"
+        f"Session memory summary:\n{memory_summary}\n\n"
+        f"Conversation history:\n{history_text}\n\n"
+        f"Knowledge context:\n{context_text}\n\n"
+        f"User question: {question}"
+    )
+
+    collected: list[str] = []
+    try:
+        stream = ollama.chat(
+            model=settings.ollama_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Use citations [path#chunk] when context supports answer.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            options={"temperature": 0.2},
+            stream=True,
+        )
+        for chunk in cast(Sequence[dict[str, Any]], stream):
+            message = chunk.get("message", {})
+            token = str(message.get("content", ""))
+            if token:
+                collected.append(token)
+                if on_token is not None:
+                    on_token(token)
+
+        reply_text = "".join(collected).strip()
+        if not reply_text:
+            raise ValueError("Empty chat stream response.")
+        reply_text = _enforce_citation_presence(reply_text, _citation_labels(chunks))
+
+        prompt_hash = build_prompt_hash("chat", settings.ollama_model, prompt)
+        if settings.cache_enabled:
+            store_cached_response(
+                session=session,
+                prompt_hash=prompt_hash,
+                cache_kind="chat",
+                model_name=settings.ollama_model,
+                prompt_text=prompt,
+                response_text=json.dumps(
+                    {"reply": reply_text, "fallback_used": False, "error_code": None},
+                    sort_keys=True,
+                ),
+            )
+
+        reply = ChatReply(
+            reply=reply_text,
+            fallback_used=False,
+            matched_chunks=_unique_paths(chunks),
+            citations=_citation_labels(chunks),
+            error_reason=retrieval_error,
+            error_code=_classify_error_code(retrieval_error),
+        )
+    except Exception as exc:
+        combined_error = _combine_errors(retrieval_error, str(exc))
+        reply = ChatReply(
+            reply=_fallback_chat_reply(question, chunks),
+            fallback_used=True,
+            matched_chunks=_unique_paths(chunks),
+            citations=_citation_labels(chunks),
+            error_reason=combined_error,
+            error_code=_classify_error_code(combined_error),
+        )
+
+    add_chat_message(session, session_id, "user", question)
+    add_chat_message(session, session_id, "assistant", reply.reply)
+    _refresh_session_memory_summary(session, session_id=session_id)
+    session.commit()
+    return len(collected), reply
+
+
+def build_session_memory_summary(session: Session, session_id: int, limit: int = 12) -> str:
+    persisted = get_session_memory_summary(session, session_id=session_id)
+    if persisted:
+        return persisted
+
+    history = list_recent_messages(session, session_id=session_id, limit=limit)
+    if not history:
+        return "No prior context in this session."
+    user_topics: list[str] = []
+    assistant_actions: list[str] = []
+    for message in history:
+        content = getattr(message, "content", "").strip().replace("\n", " ")
+        snippet = content[:120]
+        if getattr(message, "role", "") == "user":
+            user_topics.append(snippet)
+        elif getattr(message, "role", "") == "assistant":
+            assistant_actions.append(snippet)
+    return json.dumps(
+        {
+            "recent_user_topics": user_topics[-5:],
+            "recent_assistant_points": assistant_actions[-5:],
+        },
+        sort_keys=True,
+    )
+
+
+def _refresh_session_memory_summary(session: Session, session_id: int) -> None:
+    history = list_recent_messages(session, session_id=session_id, limit=12)
+    if not history:
+        return
+
+    user_topics: list[str] = []
+    assistant_points: list[str] = []
+    for message in history:
+        content = getattr(message, "content", "").strip().replace("\n", " ")
+        snippet = content[:120]
+        if getattr(message, "role", "") == "user":
+            user_topics.append(snippet)
+        elif getattr(message, "role", "") == "assistant":
+            assistant_points.append(snippet)
+
+    summary = json.dumps(
+        {
+            "recent_user_topics": user_topics[-5:],
+            "recent_assistant_points": assistant_points[-5:],
+        },
+        sort_keys=True,
+    )
+    set_session_memory_summary(session, session_id=session_id, summary=summary)
+
+
+def _safe_retrieve_relevant_chunks(
+    session: Session,
+    question: str,
+    *,
+    project_root: str,
+    session_id: int,
+) -> tuple[list[tuple[object, object, float]], str | None]:
+    try:
+        chunks = retrieve_relevant_chunks(
+            session,
+            question,
+            limit=2,
+            project_root=project_root,
+            session_id=session_id,
+        )
+        return list(chunks), None
+    except OperationalError as exc:
+        message = _migration_hint_from_error(str(exc))
+        return [], message
+
+
+def _migration_hint_from_error(error_text: str) -> str:
+    markers = (
+        "knowledge_documents.project_root",
+        "knowledge_chunks.session_id",
+    )
+    if any(marker in error_text for marker in markers):
+        return "Knowledge schema outdated. Run: uv run alembic upgrade head"
+    return error_text
+
+
+def _combine_errors(first: str | None, second: str | None) -> str | None:
+    if first and second:
+        return f"{first} | {second}"
+    return first or second
+
+
+def _classify_error_code(error_text: str | None) -> str | None:
+    if not error_text:
+        return None
+    lowered = error_text.lower()
+    if "alembic upgrade head" in lowered or "no such column" in lowered:
+        return "schema_outdated"
+    if "timeout" in lowered:
+        return "timeout"
+    if "connection" in lowered or "refused" in lowered:
+        return "network_unavailable"
+    if "empty chat" in lowered:
+        return "empty_model_response"
+    return "runtime_error"
+
+
+def _parse_cached_chat_reply(cached: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(cached)
+    except Exception:
+        return {"reply": cached, "fallback_used": False, "error_code": None}
+    if isinstance(parsed, dict) and isinstance(parsed.get("reply"), str):
+        return {
+            "reply": parsed["reply"],
+            "fallback_used": bool(parsed.get("fallback_used", False)),
+            "error_code": parsed.get("error_code"),
+        }
+    return {"reply": cached, "fallback_used": False, "error_code": None}
+
+
+def _expand_add_paths(file_paths: list[Path]) -> list[Path]:
+    expanded: list[Path] = []
+    for path in file_paths:
+        normalized = str(path)
+        if normalized.startswith("@"):
+            normalized = normalized[1:]
+        candidate = Path(normalized or ".")
+        if candidate.is_dir():
+            expanded.extend(sorted(item for item in candidate.rglob("*") if item.is_file()))
+            continue
+        expanded.append(candidate)
+    return expanded
