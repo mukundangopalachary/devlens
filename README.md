@@ -26,4 +26,12 @@ Run CLI:
 uv run devlens --help
 ```
 
+Run TUI:
+
+```bash
+uv run devlens tui
+```
+
+TUI controls and troubleshooting: [docs/tui.md](docs/tui.md)
+
 Architecture blueprint: [docs/blueprint/blueprint.md](docs/blueprint/blueprint.md)

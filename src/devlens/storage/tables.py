@@ -151,6 +151,7 @@ class KnowledgeDocument(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     file_path: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True, index=True)
+    project_root: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
     content_hash: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -175,6 +176,7 @@ class KnowledgeChunk(Base):
         index=True,
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    session_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     embedding_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     created_at: Mapped[datetime] = mapped_column(
@@ -193,7 +195,9 @@ class ScheduledTask(Base):
     related_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
     priority: Mapped[str] = mapped_column(String(32), nullable=False, default="medium")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    source_signature: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
