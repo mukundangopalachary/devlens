@@ -16,6 +16,19 @@ def test_placeholder_values_fallback_to_defaults(monkeypatch: object) -> None:
     assert settings.cache_enabled is True
 
 
+def test_quoted_placeholder_values_fallback_to_defaults(monkeypatch: object) -> None:
+    monkeypatch.setenv("DEVLENS_MAX_FILE_SIZE_KB", '"<512>"')
+    monkeypatch.setenv("DEVLENS_OLLAMA_NUM_CTX", "'<2048>'")
+    monkeypatch.setenv("DEVLENS_CACHE_ENABLED", '"<true>"')
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.max_file_size_kb == 512
+    assert settings.ollama_num_ctx == 2048
+    assert settings.cache_enabled is True
+
+
 def test_explicit_invalid_int_raises_runtime_error(monkeypatch: object) -> None:
     monkeypatch.setenv("DEVLENS_MAX_FILE_SIZE_KB", "not-an-int")
     get_settings.cache_clear()

@@ -170,6 +170,10 @@ def _env_value(name: str, default: str) -> str:
     if raw is None:
         return default
     cleaned = raw.strip()
+    if (cleaned.startswith('"') and cleaned.endswith('"')) or (
+        cleaned.startswith("'") and cleaned.endswith("'")
+    ):
+        cleaned = cleaned[1:-1].strip()
     if not cleaned:
         return default
     if cleaned.startswith("<") and cleaned.endswith(">"):
@@ -189,7 +193,12 @@ def _env_bool(name: str, default: bool) -> bool:
     raw = getenv(name)
     if raw is None:
         return default
-    cleaned = raw.strip().lower()
+    cleaned = raw.strip()
+    if (cleaned.startswith('"') and cleaned.endswith('"')) or (
+        cleaned.startswith("'") and cleaned.endswith("'")
+    ):
+        cleaned = cleaned[1:-1].strip()
+    cleaned = cleaned.lower()
     if not cleaned or (cleaned.startswith("<") and cleaned.endswith(">")):
         return default
     if cleaned in {"1", "true", "yes", "on"}:
