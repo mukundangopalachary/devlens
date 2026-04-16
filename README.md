@@ -2,6 +2,8 @@
 
 DevLens is local-first CLI tool for analyzing coding activity, extracting skill signals, and generating targeted feedback.
 
+Default model tuned for low-RAM setups: `llama3.2:3b`.
+
 ## Stack
 
 - Python 3.12
@@ -26,6 +28,67 @@ Run CLI:
 uv run devlens --help
 ```
 
+From any directory:
+
+```bash
+uv tool install . --editable --force
+devlens --help
+```
+
+If command not in PATH, use:
+
+```bash
+uvx --from . devlens --help
+```
+
+One-command bootstrap:
+
+```bash
+bash scripts/bootstrap.sh
+```
+
+Environment verification:
+
+```bash
+uv run devlens verify-env
+```
+
+Smoke test:
+
+```bash
+uv run devlens smoke-test --json
+```
+
+One-command start:
+
+```bash
+uv run devlens start
+```
+
+Wrapper start (auto-bootstrap + verify):
+
+```bash
+bash scripts/devlens.sh
+```
+
+Local release bundle:
+
+```bash
+bash scripts/release_bundle.sh
+```
+
+Make targets:
+
+```bash
+make bootstrap
+make check
+make start
+```
+
+`make check` includes wheel packaging sanity test.
+
+CI pipeline runs lint + types + tests + verify-env + smoke-test.
+
 Run TUI:
 
 ```bash
@@ -33,5 +96,6 @@ uv run devlens tui
 ```
 
 TUI controls and troubleshooting: [docs/tui.md](docs/tui.md)
+Setup details: [docs/setup.md](docs/setup.md)
 
 Architecture blueprint: [docs/blueprint/blueprint.md](docs/blueprint/blueprint.md)
