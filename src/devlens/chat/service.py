@@ -118,7 +118,12 @@ def answer_question(session: Session, session_id: int, question: str) -> ChatRep
                         "content": prompt,
                     },
                 ],
-                options={"temperature": 0.2},
+                options={
+                    "temperature": 0.2,
+                    "num_ctx": settings.ollama_num_ctx,
+                    "num_predict": settings.ollama_chat_num_predict,
+                },
+                keep_alive=settings.ollama_keep_alive,
                 stream=False,
             ),
         )
@@ -390,7 +395,12 @@ def stream_answer_question(
                 },
                 {"role": "user", "content": prompt},
             ],
-            options={"temperature": 0.2},
+            options={
+                "temperature": 0.2,
+                "num_ctx": settings.ollama_num_ctx,
+                "num_predict": settings.ollama_chat_num_predict,
+            },
+            keep_alive=settings.ollama_keep_alive,
             stream=True,
         )
         for chunk in cast(Sequence[dict[str, Any]], stream):
