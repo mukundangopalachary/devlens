@@ -35,7 +35,12 @@ def analyze_with_llm(
             ollama.generate(
                 model=settings.ollama_model,
                 prompt=prompt,
-                options={"temperature": 0.1},
+                options={
+                    "temperature": 0.1,
+                    "num_ctx": settings.ollama_num_ctx,
+                    "num_predict": settings.ollama_analysis_num_predict,
+                },
+                keep_alive=settings.ollama_keep_alive,
             ),
         )
         raw_text = str(response.get("response", ""))
