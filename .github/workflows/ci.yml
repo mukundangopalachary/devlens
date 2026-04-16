@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  python-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Create env file
+        run: |
+          if [ ! -f .env ] && [ -f .env.example ]; then
+            cp .env.example .env
+          fi
+
+      - name: Migrate database
+        run: uv run alembic upgrade head
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run mypy src
+
+      - name: Unit tests
+        run: uv run pytest -q
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      - name: Packaging tests
+        run: uv run pytest tests/unit/test_packaging_wheel.py -q
+
+      - name: Verify environment
+        run: uv run devlens verify-env --json
+
+      - name: Smoke test
+        run: uv run devlens smoke-test --json
