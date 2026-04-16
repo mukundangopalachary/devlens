@@ -57,6 +57,8 @@ Thumbs.db
 data/
 artifacts/
 cache/
+!src/devlens/cache/
+!src/devlens/cache/*.py
 models/
 embeddings/
 chroma/
@@ -72,4 +74,4 @@ reports/
 
 
 ./AGENTS.md
-./git.sh
+git.sh
