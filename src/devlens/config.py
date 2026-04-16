@@ -80,26 +80,25 @@ def get_settings() -> Settings:
     qdrant_path_default = _resolve_path_from_root(project_root, Path("qdrant_storage"))
     try:
         return Settings(
-            db_url=_normalize_db_url(getenv("DEVLENS_DB_URL", db_url_default), project_root),
-            ollama_model=getenv("DEVLENS_OLLAMA_MODEL", "llama3.2:3b"),
-            ollama_embedding_model=getenv("DEVLENS_OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
-            vector_backend=getenv("DEVLENS_VECTOR_BACKEND", "qdrant"),
+            db_url=_normalize_db_url(_env_value("DEVLENS_DB_URL", db_url_default), project_root),
+            ollama_model=_env_value("DEVLENS_OLLAMA_MODEL", "llama3.2:3b"),
+            ollama_embedding_model=_env_value("DEVLENS_OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
+            vector_backend=_env_value("DEVLENS_VECTOR_BACKEND", "qdrant"),
             qdrant_path=_resolve_path_from_root(
                 project_root,
-                Path(getenv("DEVLENS_QDRANT_PATH", str(qdrant_path_default))),
+                Path(_env_value("DEVLENS_QDRANT_PATH", str(qdrant_path_default))),
             ),
-            qdrant_collection=getenv("DEVLENS_QDRANT_COLLECTION", "devlens_knowledge"),
+            qdrant_collection=_env_value("DEVLENS_QDRANT_COLLECTION", "devlens_knowledge"),
             project_root=project_root,
-            max_file_size_kb=int(getenv("DEVLENS_MAX_FILE_SIZE_KB", "512")),
-            allowed_extensions_raw=getenv("DEVLENS_ALLOWED_EXTENSIONS", ".py"),
-            llm_timeout_seconds=int(getenv("DEVLENS_LLM_TIMEOUT_SECONDS", "30")),
-            cache_enabled=getenv("DEVLENS_CACHE_ENABLED", "true").lower()
-            in {"1", "true", "yes", "on"},
-            log_level=getenv("DEVLENS_LOG_LEVEL", "INFO"),
-            ollama_num_ctx=int(getenv("DEVLENS_OLLAMA_NUM_CTX", "2048")),
-            ollama_analysis_num_predict=int(getenv("DEVLENS_OLLAMA_ANALYSIS_NUM_PREDICT", "256")),
-            ollama_chat_num_predict=int(getenv("DEVLENS_OLLAMA_CHAT_NUM_PREDICT", "384")),
-            ollama_keep_alive=getenv("DEVLENS_OLLAMA_KEEP_ALIVE", "5m"),
+            max_file_size_kb=_env_int("DEVLENS_MAX_FILE_SIZE_KB", 512),
+            allowed_extensions_raw=_env_value("DEVLENS_ALLOWED_EXTENSIONS", ".py"),
+            llm_timeout_seconds=_env_int("DEVLENS_LLM_TIMEOUT_SECONDS", 30),
+            cache_enabled=_env_bool("DEVLENS_CACHE_ENABLED", True),
+            log_level=_env_value("DEVLENS_LOG_LEVEL", "INFO"),
+            ollama_num_ctx=_env_int("DEVLENS_OLLAMA_NUM_CTX", 2048),
+            ollama_analysis_num_predict=_env_int("DEVLENS_OLLAMA_ANALYSIS_NUM_PREDICT", 256),
+            ollama_chat_num_predict=_env_int("DEVLENS_OLLAMA_CHAT_NUM_PREDICT", 384),
+            ollama_keep_alive=_env_value("DEVLENS_OLLAMA_KEEP_ALIVE", "5m"),
         )
     except ValidationError as exc:
         raise RuntimeError(f"Invalid DevLens configuration: {exc}") from exc
@@ -164,3 +163,37 @@ def _resolve_path_from_root(project_root: Path, candidate: Path) -> Path:
     if expanded.is_absolute():
         return expanded.resolve()
     return (project_root / expanded).resolve()
+
+
+def _env_value(name: str, default: str) -> str:
+    raw = getenv(name)
+    if raw is None:
+        return default
+    cleaned = raw.strip()
+    if not cleaned:
+        return default
+    if cleaned.startswith("<") and cleaned.endswith(">"):
+        return default
+    return cleaned
+
+
+def _env_int(name: str, default: int) -> int:
+    value = _env_value(name, str(default))
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid integer for {name}: {value}") from exc
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = getenv(name)
+    if raw is None:
+        return default
+    cleaned = raw.strip().lower()
+    if not cleaned or (cleaned.startswith("<") and cleaned.endswith(">")):
+        return default
+    if cleaned in {"1", "true", "yes", "on"}:
+        return True
+    if cleaned in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"Invalid boolean for {name}: {raw}")
