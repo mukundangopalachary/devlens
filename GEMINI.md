@@ -61,7 +61,7 @@ uv run alembic upgrade head
 - **Running Tests:** `uv run pytest`.
 
 ### Configuration
-- Config is managed via `pydantic-settings` in `src/devlens/config.py`.
+- Config is managed via `pydantic-settings` (effectively) in `src/devlens/config.py`.
 - Defaults are in code, overrides in `.env` (managed by `python-dotenv`, `override=False`).
 - Key variables: `DEVLENS_DB_URL`, `DEVLENS_OLLAMA_MODEL`, `DEVLENS_PROJECT_ROOT`.
 

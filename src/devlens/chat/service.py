@@ -104,28 +104,25 @@ def answer_question(session: Session, session_id: int, question: str) -> ChatRep
         return reply
 
     try:
-        response = cast(
-            dict[str, Any],
-            ollama.chat(
-                model=settings.ollama_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Use citations [path#chunk] when context supports answer.",
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    },
-                ],
-                options={
-                    "temperature": 0.2,
-                    "num_ctx": settings.ollama_num_ctx,
-                    "num_predict": settings.ollama_chat_num_predict,
+        response = ollama.chat(
+            model=settings.ollama_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Use citations [path#chunk] when context supports answer.",
                 },
-                keep_alive=settings.ollama_keep_alive,
-                stream=False,
-            ),
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            options={
+                "temperature": 0.2,
+                "num_ctx": settings.ollama_num_ctx,
+                "num_predict": settings.ollama_chat_num_predict,
+            },
+            keep_alive=settings.ollama_keep_alive,
+            stream=False,
         )
         reply_text = _extract_chat_text(response)
         if not reply_text:
@@ -337,13 +334,20 @@ def _build_context(
     return "\n\n".join(sections)
 
 
-def _extract_chat_text(response: dict[str, Any]) -> str:
-    message = response.get("message")
-    if isinstance(message, dict):
-        content = message.get("content")
-        if isinstance(content, str):
-            return content.strip()
-    return str(response.get("response", "")).strip()
+def _extract_chat_text(response: Any) -> str:
+    message_content = _extract_message_content(_extract_field(response, "message"))
+    if message_content:
+        return message_content
+
+    response_text = _extract_field(response, "response")
+    if isinstance(response_text, str):
+        return response_text.strip()
+
+    if hasattr(response, "model_dump"):
+        dumped = cast(dict[str, Any], response.model_dump())
+        return _extract_chat_text(dumped)
+
+    return ""
 
 
 def _enforce_citation_presence(reply_text: str, citations: Sequence[str]) -> str:
@@ -403,9 +407,8 @@ def stream_answer_question(
             keep_alive=settings.ollama_keep_alive,
             stream=True,
         )
-        for chunk in cast(Sequence[dict[str, Any]], stream):
-            message = chunk.get("message", {})
-            token = str(message.get("content", ""))
+        for chunk in cast(Sequence[Any], stream):
+            token = _extract_stream_token(chunk)
             if token:
                 collected.append(token)
                 if on_token is not None:
@@ -571,6 +574,34 @@ def _parse_cached_chat_reply(cached: str) -> dict[str, object]:
             "error_code": parsed.get("error_code"),
         }
     return {"reply": cached, "fallback_used": False, "error_code": None}
+
+
+def _extract_stream_token(chunk: Any) -> str:
+    message_content = _extract_message_content(_extract_field(chunk, "message"))
+    if message_content:
+        return message_content
+    direct_response = _extract_field(chunk, "response")
+    if isinstance(direct_response, str):
+        return direct_response
+    return ""
+
+
+def _extract_message_content(message: Any) -> str:
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str):
+            return content.strip()
+        return ""
+    content_attr = getattr(message, "content", None)
+    if isinstance(content_attr, str):
+        return content_attr.strip()
+    return ""
+
+
+def _extract_field(source: Any, key: str) -> Any:
+    if isinstance(source, dict):
+        return source.get(key)
+    return getattr(source, key, None)
 
 
 def _expand_add_paths(file_paths: list[Path]) -> list[Path]:
