@@ -45,7 +45,7 @@ def doctor_command(
                 typer.echo("- uv run alembic upgrade head")
             if isinstance(ollama_check, dict) and ollama_check.get("status") != "ok":
                 typer.echo("- ollama serve")
-                typer.echo("- ollama pull llama3.2:3b")
+                typer.echo("- ollama pull gemma2:2b")
                 typer.echo("- ollama pull nomic-embed-text")
             if isinstance(qdrant_check, dict) and qdrant_check.get("status") != "ok":
                 typer.echo("- uv run devlens reindex")

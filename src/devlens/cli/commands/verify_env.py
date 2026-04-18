@@ -106,7 +106,7 @@ def collect_env_checks() -> dict[str, dict[str, object]]:
             "ok": ollama_check.get("status") == "ok",
             "required": False,
             "details": ollama_check.get("summary", "ollama check unavailable"),
-            "fix": "ollama serve && ollama pull llama3.2:3b && ollama pull nomic-embed-text",
+            "fix": "ollama serve && ollama pull gemma2:2b && ollama pull nomic-embed-text",
         },
     }
 
