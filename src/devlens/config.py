@@ -18,7 +18,7 @@ class Settings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     db_url: str = "sqlite:///devlens.db"
-    ollama_model: str = "llama3.2:3b"
+    ollama_model: str = "gemma2:2b"
     ollama_embedding_model: str = "nomic-embed-text"
     vector_backend: str = "qdrant"
     qdrant_path: Path = Path("qdrant_storage")
@@ -75,13 +75,13 @@ def get_settings() -> Settings:
     if env_file is not None:
         load_dotenv(env_file, override=False)
 
-    project_root = Path(getenv("DEVLENS_PROJECT_ROOT", str(project_root_default)))
+    project_root = Path(_env_value("DEVLENS_PROJECT_ROOT", str(project_root_default)))
     db_url_default = _default_db_url(project_root)
     qdrant_path_default = _resolve_path_from_root(project_root, Path("qdrant_storage"))
     try:
         return Settings(
             db_url=_normalize_db_url(_env_value("DEVLENS_DB_URL", db_url_default), project_root),
-            ollama_model=_env_value("DEVLENS_OLLAMA_MODEL", "llama3.2:3b"),
+            ollama_model=_env_value("DEVLENS_OLLAMA_MODEL", "gemma2:2b"),
             ollama_embedding_model=_env_value("DEVLENS_OLLAMA_EMBEDDING_MODEL", "nomic-embed-text"),
             vector_backend=_env_value("DEVLENS_VECTOR_BACKEND", "qdrant"),
             qdrant_path=_resolve_path_from_root(
@@ -110,7 +110,7 @@ def get_config() -> AppConfig:
 
 
 def _detect_project_root() -> Path:
-    env_root = getenv("DEVLENS_PROJECT_ROOT")
+    env_root = _env_value("DEVLENS_PROJECT_ROOT", "")
     if env_root:
         return Path(env_root).expanduser().resolve()
 
@@ -190,19 +190,10 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    raw = getenv(name)
-    if raw is None:
-        return default
-    cleaned = raw.strip()
-    if (cleaned.startswith('"') and cleaned.endswith('"')) or (
-        cleaned.startswith("'") and cleaned.endswith("'")
-    ):
-        cleaned = cleaned[1:-1].strip()
-    cleaned = cleaned.lower()
-    if not cleaned or (cleaned.startswith("<") and cleaned.endswith(">")):
-        return default
-    if cleaned in {"1", "true", "yes", "on"}:
+    default_str = "true" if default else "false"
+    val = _env_value(name, default_str).lower()
+    if val in {"1", "true", "yes", "on"}:
         return True
-    if cleaned in {"0", "false", "no", "off"}:
+    if val in {"0", "false", "no", "off"}:
         return False
-    raise RuntimeError(f"Invalid boolean for {name}: {raw}")
+    raise RuntimeError(f"Invalid boolean for {name}: {val}")

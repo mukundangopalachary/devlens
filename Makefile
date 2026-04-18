@@ -24,6 +24,7 @@ test:
 package-test:
 	uv build --wheel
 	uv run pytest tests/unit/test_packaging_wheel.py -q
+	CI=true uv run pytest tests/integration/test_packaging_integrity.py -q
 
 check: lint type test package-test smoke
 

@@ -43,6 +43,9 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "packaging: packaging and wheel integrity checks",
+]
 
 [tool.mypy]
 python_version = "3.12"

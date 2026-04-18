@@ -2,7 +2,7 @@
 
 DevLens is local-first CLI tool for analyzing coding activity, extracting skill signals, and generating targeted feedback.
 
-Default model tuned for low-RAM setups: `llama3.2:3b`.
+Default model tuned for low-RAM setups: `gemma2:2b`.
 
 ## Stack
 
@@ -86,6 +86,7 @@ make start
 ```
 
 `make check` includes wheel packaging sanity test.
+CI path enforces packaging integration test after wheel build.
 
 CI pipeline runs lint + types + tests + verify-env + smoke-test.
 

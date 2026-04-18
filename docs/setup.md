@@ -76,6 +76,7 @@ Packaging sanity check:
 ```bash
 uv build --wheel
 uv run pytest tests/unit/test_packaging_wheel.py -q
+CI=true uv run pytest tests/integration/test_packaging_integrity.py -q
 ```
 
 Strict smoke test (includes ask path):
@@ -115,7 +116,7 @@ On target machine:
   - `uv run alembic upgrade head`
 - Ollama not ready:
   - `ollama serve`
-  - `ollama pull llama3.2:3b`
+  - `ollama pull gemma2:2b`
   - `ollama pull nomic-embed-text`
 - Qdrant index stale:
   - `uv run devlens reindex`
