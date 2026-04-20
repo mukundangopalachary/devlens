@@ -39,7 +39,7 @@ jobs:
         run: uv run mypy src
 
       - name: Unit tests
-        run: uv run pytest -q
+        run: uv run pytest -q -m "not packaging"
 
       - name: Build wheel
         run: uv build --wheel

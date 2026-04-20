@@ -62,7 +62,7 @@ uv run devlens verify-env
 uv run devlens smoke-test --json
 uv run ruff check .
 uv run mypy src
-uv run pytest -q
+uv run pytest -q -m "not packaging"
 ```
 
 Or run all quickly:

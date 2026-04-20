@@ -19,7 +19,7 @@ type:
 	uv run mypy src
 
 test:
-	uv run pytest -q
+	uv run pytest -q -m "not packaging"
 
 package-test:
 	uv build --wheel

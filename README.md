@@ -85,10 +85,9 @@ make check
 make start
 ```
 
+`make test` runs non-packaging tests only.
 `make check` includes wheel packaging sanity test.
-CI path enforces packaging integration test after wheel build.
-
-CI pipeline runs lint + types + tests + verify-env + smoke-test.
+CI runs non-packaging tests first, then packaging tests after wheel build.
 
 Run TUI:
 
