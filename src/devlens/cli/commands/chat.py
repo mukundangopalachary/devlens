@@ -13,6 +13,8 @@ from devlens.chat.service import (
     get_chat_status_line,
     get_task_lines,
     ingest_files_into_knowledge_base,
+    set_task_due_days,
+    snooze_existing_task,
     start_chat_session,
     stream_answer_question,
 )
@@ -36,8 +38,8 @@ def chat_command(files: FileArgument | None = None) -> None:
 
         typer.echo("DevLens Chat")
         typer.echo(
-            "commands: :add <path>  :tasks  :done <id>  :rm <id>  "
-            ":sum  :stream on|off  :help  :exit"
+            "commands: :add <path>  :tasks [open|done|all]  :done <id>  :rm <id>  "
+            ":due <id> <days>  :snooze <id> <days>  :sum  :stream on|off  :help  :exit"
         )
         typer.echo(get_chat_status_line())
         streaming_enabled = False
@@ -52,9 +54,11 @@ def chat_command(files: FileArgument | None = None) -> None:
                 typer.echo(
                     "Ask normal coding questions or file-specific doubts.\n"
                     ":add <path> ingest file into knowledge base\n"
-                    ":tasks show tasks\n"
+                    ":tasks [open|done|all] show tasks\n"
                     ":done <id> mark task done\n"
                     ":rm <id> remove task\n"
+                    ":due <id> <days> move due date forward from now\n"
+                    ":snooze <id> <days> hide task until later\n"
                     ":sum print session memory summary\n"
                     ":stream on|off toggle token stream mode\n"
                     ":exit quit chat"
@@ -71,8 +75,12 @@ def chat_command(files: FileArgument | None = None) -> None:
                 else:
                     typer.echo("usage: :stream on|off")
                 continue
-            if user_input == ":tasks":
-                for line in get_task_lines(session):
+            if user_input.startswith(":tasks"):
+                status = _parse_tasks_status(user_input)
+                if status is None:
+                    typer.echo("usage: :tasks [open|done|all]")
+                    continue
+                for line in get_task_lines(session, status=status):
                     typer.echo(line)
                 continue
             if user_input.startswith(":done "):
@@ -92,6 +100,28 @@ def chat_command(files: FileArgument | None = None) -> None:
                     typer.echo(f"task #{task_id} removed")
                 else:
                     typer.echo(f"task #{task_id} not found")
+                continue
+            if user_input.startswith(":due "):
+                parsed = _parse_task_days_args(user_input[5:])
+                if parsed is None:
+                    typer.echo("usage: :due <id> <days>")
+                else:
+                    task_id, days = parsed
+                    if set_task_due_days(session, task_id, days):
+                        typer.echo(f"task #{task_id} due in {days} day(s)")
+                    else:
+                        typer.echo(f"task #{task_id} not found")
+                continue
+            if user_input.startswith(":snooze "):
+                parsed = _parse_task_days_args(user_input[8:])
+                if parsed is None:
+                    typer.echo("usage: :snooze <id> <days>")
+                else:
+                    task_id, days = parsed
+                    if snooze_existing_task(session, task_id, days):
+                        typer.echo(f"task #{task_id} snoozed for {days} day(s)")
+                    else:
+                        typer.echo(f"task #{task_id} not found")
                 continue
             if user_input.startswith(":add "):
                 raw_paths = [part for part in user_input[5:].split() if part]
@@ -142,3 +172,25 @@ def _parse_task_id(raw_value: str) -> int | None:
     if not raw_value.isdigit():
         return None
     return int(raw_value)
+
+
+def _parse_task_days_args(raw_value: str) -> tuple[int, int] | None:
+    parts = raw_value.split()
+    if len(parts) != 2:
+        return None
+    if not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    task_id = int(parts[0])
+    days = int(parts[1])
+    if days <= 0:
+        return None
+    return task_id, days
+
+
+def _parse_tasks_status(user_input: str) -> str | None:
+    parts = user_input.split()
+    if len(parts) == 1:
+        return "open"
+    if len(parts) == 2 and parts[1] in {"open", "done", "all"}:
+        return parts[1]
+    return None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from hashlib import sha256
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Thread
@@ -32,6 +33,7 @@ def run_watch_loop(
     event = stop_event or Event()
     queue: Queue[Path] = Queue(maxsize=max_queue_size)
     seen_paths: set[Path] = set()
+    save_mode_state: dict[Path, str] = {}
 
     worker = Thread(
         target=_worker_loop,
@@ -42,7 +44,11 @@ def run_watch_loop(
 
     while not event.is_set():
         stats["loops"] += 1
-        candidate_paths = _collect_paths(target_path=target_path, mode=mode)
+        candidate_paths = _collect_paths(
+            target_path=target_path,
+            mode=mode,
+            save_mode_state=save_mode_state,
+        )
         for path in candidate_paths:
             if path in seen_paths:
                 continue
@@ -97,12 +103,17 @@ def _worker_loop(
                 seen_paths.discard(item)
 
 
-def _collect_paths(target_path: Path, mode: str) -> list[Path]:
+def _collect_paths(
+    target_path: Path,
+    mode: str,
+    *,
+    save_mode_state: dict[Path, str] | None = None,
+) -> list[Path]:
     if mode == "git":
         return get_changed_files(target_path)
     if mode == "save":
-        scan_results = scan_specific_files(_candidate_files_for_save_mode(target_path))
-        return [result.file_path for result in scan_results]
+        state = save_mode_state if save_mode_state is not None else {}
+        return _changed_files_for_save_mode(target_path, state)
     return []
 
 
@@ -112,3 +123,31 @@ def _candidate_files_for_save_mode(target_path: Path) -> list[Path]:
     if not target_path.exists() or not target_path.is_dir():
         return []
     return [path for path in sorted(target_path.rglob("*")) if path.is_file()]
+
+
+def _changed_files_for_save_mode(
+    target_path: Path,
+    state: dict[Path, str],
+) -> list[Path]:
+    candidates = _candidate_files_for_save_mode(target_path)
+    active_paths = set(candidates)
+    changed: list[Path] = []
+    for path in candidates:
+        try:
+            stat = path.stat()
+            fingerprint = (
+                f"{stat.st_mtime_ns}:{stat.st_size}:"
+                f"{sha256(path.read_bytes()).hexdigest()}"
+            )
+        except OSError:
+            continue
+        if state.get(path) != fingerprint:
+            state[path] = fingerprint
+            changed.append(path)
+
+    stale_paths = [path for path in state if path not in active_paths]
+    for path in stale_paths:
+        del state[path]
+
+    scan_results = scan_specific_files(changed)
+    return [result.file_path for result in scan_results]

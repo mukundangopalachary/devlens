@@ -29,8 +29,11 @@ from devlens.storage.repositories.knowledge import (
     mark_task_done,
     remove_task,
     retrieve_relevant_chunks,
+    snooze_task,
+    update_task_due,
     upsert_knowledge_document,
 )
+from devlens.storage.tables import ScheduledTask
 
 
 def ingest_files_into_knowledge_base(
@@ -166,12 +169,13 @@ def answer_question(session: Session, session_id: int, question: str) -> ChatRep
     return reply
 
 
-def get_task_lines(session: Session, limit: int = 10) -> list[str]:
+def get_task_lines(session: Session, limit: int = 10, status: str = "open") -> list[str]:
     tasks = list_scheduled_tasks(session, limit=limit)
+    filtered_tasks = _filter_tasks(tasks, status=status)
     return [
         f"#{task.id} | {task.priority.upper()} | {task.status} | "
         f"{task.related_file_path or '-'} | {task.title}"
-        for task in tasks
+        for task in filtered_tasks
     ]
 
 
@@ -197,6 +201,18 @@ def complete_task(session: Session, task_id: int) -> bool:
 
 def delete_task(session: Session, task_id: int) -> bool:
     success = remove_task(session, task_id)
+    session.commit()
+    return success
+
+
+def set_task_due_days(session: Session, task_id: int, days: int) -> bool:
+    success = update_task_due(session, task_id, days)
+    session.commit()
+    return success
+
+
+def snooze_existing_task(session: Session, task_id: int, days: int) -> bool:
+    success = snooze_task(session, task_id, days)
     session.commit()
     return success
 
@@ -616,3 +632,11 @@ def _expand_add_paths(file_paths: list[Path]) -> list[Path]:
             continue
         expanded.append(candidate)
     return expanded
+
+
+def _filter_tasks(tasks: Sequence[ScheduledTask], *, status: str) -> list[ScheduledTask]:
+    if status == "all":
+        return list(tasks)
+    if status == "done":
+        return [task for task in tasks if task.status == "done"]
+    return [task for task in tasks if task.status != "done"]
