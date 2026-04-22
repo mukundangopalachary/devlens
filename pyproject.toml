@@ -15,6 +15,7 @@ dependencies = [
     "sqlalchemy>=2.0.43",
     "structlog>=25.4.0",
     "typer>=0.19.2",
+    "watchdog>=6.0.0",
 ]
 
 [project.scripts]
@@ -58,4 +59,8 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["qdrant_client"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["watchdog.*"]
 ignore_missing_imports = true

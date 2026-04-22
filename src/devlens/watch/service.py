@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from devlens.analysis.pipeline import run_static_analysis_for_specific_files
 from devlens.ingestion.file_scanner import scan_specific_files
 from devlens.ingestion.git_diff import get_changed_files
+from devlens.watch.event_watcher import run_event_watch, watchdog_available
 
 
 def run_watch_loop(
@@ -22,6 +23,7 @@ def run_watch_loop(
     max_queue_size: int = 128,
     max_batch_size: int = 32,
     stop_event: Event | None = None,
+    debounce_seconds: float = 0.5,
 ) -> dict[str, int]:
     stats = {
         "loops": 0,
@@ -42,23 +44,37 @@ def run_watch_loop(
     )
     worker.start()
 
-    while not event.is_set():
-        stats["loops"] += 1
-        candidate_paths = _collect_paths(
-            target_path=target_path,
-            mode=mode,
-            save_mode_state=save_mode_state,
+    if mode == "event" and watchdog_available():
+        event_thread = Thread(
+            target=run_event_watch,
+            args=(target_path, queue, event),
+            kwargs={"debounce_seconds": debounce_seconds},
+            daemon=True,
         )
-        for path in candidate_paths:
-            if path in seen_paths:
-                continue
-            if queue.full():
-                stats["skipped"] += 1
-                continue
-            queue.put(path)
-            seen_paths.add(path)
-            stats["queued"] += 1
-        time.sleep(interval_seconds)
+        event_thread.start()
+        while not event.is_set():
+            time.sleep(0.2)
+        event_thread.join(timeout=2.0)
+    else:
+        # Polling mode (git/save, or event fallback when watchdog unavailable)
+        while not event.is_set():
+            stats["loops"] += 1
+            actual_mode = "save" if mode == "event" else mode
+            candidate_paths = _collect_paths(
+                target_path=target_path,
+                mode=actual_mode,
+                save_mode_state=save_mode_state,
+            )
+            for path in candidate_paths:
+                if path in seen_paths:
+                    continue
+                if queue.full():
+                    stats["skipped"] += 1
+                    continue
+                queue.put(path)
+                seen_paths.add(path)
+                stats["queued"] += 1
+            time.sleep(interval_seconds)
 
     worker.join(timeout=max(interval_seconds * 2, 1.0))
     return stats
