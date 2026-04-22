@@ -75,7 +75,21 @@ def get_settings() -> Settings:
     if env_file is not None:
         load_dotenv(env_file, override=False)
 
-    project_root = Path(_env_value("DEVLENS_PROJECT_ROOT", str(project_root_default)))
+    # If DEVLENS_PROJECT_ROOT is relative (e.g. "."), resolve it relative
+    # to the directory containing the .env file when it was found outside CWD.
+    raw_root = _env_value("DEVLENS_PROJECT_ROOT", "")
+    if raw_root and env_file is not None:
+        root_path = Path(raw_root)
+        if not root_path.is_absolute():
+            env_dir = Path(env_file).resolve().parent
+            project_root = (env_dir / root_path).resolve()
+        else:
+            project_root = root_path.expanduser().resolve()
+    elif raw_root:
+        project_root = Path(raw_root).expanduser().resolve()
+    else:
+        project_root = project_root_default
+
     db_url_default = _default_db_url(project_root)
     qdrant_path_default = _resolve_path_from_root(project_root, Path("qdrant_storage"))
     try:
@@ -132,12 +146,19 @@ def _detect_project_root() -> Path:
 def _find_env_file(project_root: Path) -> str | None:
     current = Path.cwd().resolve()
     candidates: list[Path] = []
+    # Walk CWD up to project root
     while True:
         candidates.append(current / ENV_FILE_NAME)
         if current == project_root or current.parent == current:
             break
         current = current.parent
     candidates.append(project_root / ENV_FILE_NAME)
+    # Fallback: devlens package installation directory
+    package_dir = Path(__file__).resolve().parent
+    repo_root = package_dir.parent.parent  # src/devlens -> src -> repo
+    candidates.append(repo_root / ENV_FILE_NAME)
+    # Fallback: user config directory
+    candidates.append(Path.home() / ".config" / "devlens" / ENV_FILE_NAME)
     for candidate in candidates:
         if candidate.exists() and candidate.is_file():
             return str(candidate)
