@@ -8,7 +8,9 @@ import typer
 from sqlalchemy.orm import Session
 
 from devlens.analysis.static.python_ast import analyze_python_file
-from devlens.cli.json_contract import emit_json_error, success_response
+from devlens.cli.error_handler import handle_errors
+from devlens.cli.json_contract import success_response
+from devlens.core.errors import DevLensError, InvalidArgumentsError, TaskNotFoundError
 from devlens.core.schemas import SkillAssessment
 from devlens.feedback.tasks import generate_tasks
 from devlens.ingestion.file_scanner import scan_specific_files
@@ -26,6 +28,7 @@ from devlens.storage.repositories.knowledge import (
 LimitOption = Annotated[int, typer.Option("--limit", min=1, max=100, help="Max tasks to list.")]
 
 
+@handle_errors("tasks")
 def tasks_command(
     limit: LimitOption = 20,
     done: int | None = typer.Option(None, "--done", help="Mark task id as done."),
@@ -51,15 +54,7 @@ def tasks_command(
         1 for item in (done, remove, due, snooze, regenerate) if item is not None
     )
     if operations_requested > 1:
-        if as_json:
-            emit_json_error(
-                "tasks",
-                "invalid_arguments",
-                "Use only one task operation in a single call.",
-            )
-        else:
-            typer.echo("use only one operation: --done/--remove/--due/--snooze/--regenerate")
-        raise typer.Exit(code=1)
+        raise InvalidArgumentsError("Use only one task operation in a single call.")
 
     session = SessionLocal()
     try:
@@ -68,63 +63,37 @@ def tasks_command(
             success = mark_task_done(session, done)
             if not success:
                 session.rollback()
-                if as_json:
-                    emit_json_error("tasks", "task_not_found", f"Task id {done} not found.")
-                else:
-                    typer.echo(f"task #{done} not found")
-                raise typer.Exit(code=1)
+                raise TaskNotFoundError(f"Task id {done} not found.")
             session.commit()
         elif remove is not None:
             success = remove_task(session, remove)
             if not success:
                 session.rollback()
-                if as_json:
-                    emit_json_error("tasks", "task_not_found", f"Task id {remove} not found.")
-                else:
-                    typer.echo(f"task #{remove} not found")
-                raise typer.Exit(code=1)
+                raise TaskNotFoundError(f"Task id {remove} not found.")
             session.commit()
         elif due is not None:
             parsed = _parse_task_days(due)
             if parsed is None:
-                if as_json:
-                    emit_json_error("tasks", "invalid_arguments", "--due expects id:days")
-                typer.echo("--due expects id:days")
-                raise typer.Exit(code=1)
+                raise InvalidArgumentsError("--due expects id:days")
             target_id, due_days = parsed
             if due_days <= 0:
-                if as_json:
-                    emit_json_error("tasks", "invalid_arguments", "--due days must be positive")
-                typer.echo("--due days must be positive")
-                raise typer.Exit(code=1)
+                raise InvalidArgumentsError("--due days must be positive")
             success = update_task_due(session, target_id, due_days)
             if not success:
                 session.rollback()
-                if as_json:
-                    emit_json_error("tasks", "task_not_found", f"Task id {target_id} not found.")
-                typer.echo(f"task #{target_id} not found")
-                raise typer.Exit(code=1)
+                raise TaskNotFoundError(f"Task id {target_id} not found.")
             session.commit()
         elif snooze is not None:
             parsed = _parse_task_days(snooze)
             if parsed is None:
-                if as_json:
-                    emit_json_error("tasks", "invalid_arguments", "--snooze expects id:days")
-                typer.echo("--snooze expects id:days")
-                raise typer.Exit(code=1)
+                raise InvalidArgumentsError("--snooze expects id:days")
             target_id, snooze_days = parsed
             if snooze_days <= 0:
-                if as_json:
-                    emit_json_error("tasks", "invalid_arguments", "--snooze days must be positive")
-                typer.echo("--snooze days must be positive")
-                raise typer.Exit(code=1)
+                raise InvalidArgumentsError("--snooze days must be positive")
             success = snooze_task(session, target_id, snooze_days)
             if not success:
                 session.rollback()
-                if as_json:
-                    emit_json_error("tasks", "task_not_found", f"Task id {target_id} not found.")
-                typer.echo(f"task #{target_id} not found")
-                raise typer.Exit(code=1)
+                raise TaskNotFoundError(f"Task id {target_id} not found.")
             session.commit()
         elif regenerate is not None:
             generated = _regenerate_from_file(session, Path(regenerate))
@@ -133,14 +102,7 @@ def tasks_command(
         tasks = list_scheduled_tasks(session, limit=limit)
     except typer.Exit:
         raise
-    except Exception as exc:
-        if as_json:
-            emit_json_error(
-                "tasks",
-                "tasks_failed",
-                "Tasks command failed.",
-                details=str(exc),
-            )
+    except DevLensError:
         raise
     finally:
         session.close()

@@ -7,11 +7,13 @@ from typing import Any
 
 import typer
 
+from devlens.cli.error_handler import handle_errors
 from devlens.cli.json_contract import error_response, success_response
 from devlens.config import get_settings
 from devlens.health import collect_health_snapshot
 
 
+@handle_errors("verify-env")
 def verify_env_command(
     as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:

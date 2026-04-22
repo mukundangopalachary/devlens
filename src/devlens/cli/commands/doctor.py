@@ -4,25 +4,17 @@ import json
 
 import typer
 
-from devlens.cli.json_contract import emit_json_error, success_response
+from devlens.cli.error_handler import handle_errors
+from devlens.cli.json_contract import success_response
 from devlens.health import collect_health_report, collect_health_snapshot
 
 
+@handle_errors("doctor")
 def doctor_command(
     as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     setup: bool = typer.Option(False, "--setup", help="Print setup fix commands."),
 ) -> None:
-    try:
-        snapshot = collect_health_snapshot()
-    except Exception as exc:
-        if as_json:
-            emit_json_error(
-                "doctor",
-                "doctor_failed",
-                "Doctor command failed.",
-                details=str(exc),
-            )
-        raise
+    snapshot = collect_health_snapshot()
 
     if as_json:
         payload = success_response("doctor", snapshot)

@@ -7,34 +7,35 @@ from typing import Annotated
 
 import typer
 
-from devlens.cli.json_contract import emit_json_error, success_response
+from devlens.cli.error_handler import handle_errors
+from devlens.cli.json_contract import success_response
+from devlens.core.errors import DevLensError, WatchError
 from devlens.storage.db import SessionLocal
 from devlens.watch.service import run_watch_loop
 
 PathArgument = Annotated[Path, typer.Argument(resolve_path=True)]
 
 
+@handle_errors("watch")
 def watch_command(
     path: PathArgument = Path("."),
-    mode: str = typer.Option("git", "--mode", help="Watch mode: git or save."),
+    mode: str = typer.Option("git", "--mode", help="Watch mode: git, save, or event."),
     interval: float = typer.Option(1.0, "--interval", min=0.2, help="Polling interval seconds."),
     loops: int = typer.Option(0, "--loops", min=0, help="Max loops (0 means infinite)."),
+    debounce: float = typer.Option(
+        0.5, "--debounce", min=0.1, help="Debounce seconds for event mode."
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    if mode not in {"git", "save"}:
-        if as_json:
-            emit_json_error("watch", "invalid_arguments", "--mode must be git or save.")
-        raise typer.BadParameter("--mode must be git or save")
+    if mode not in {"git", "save", "event"}:
+        raise DevLensError("--mode must be git, save, or event.")
 
     if not path.exists():
-        if as_json:
-            emit_json_error("watch", "invalid_path", f"Path not found: {path}")
-        raise typer.BadParameter(f"Path not found: {path}")
+        raise DevLensError(f"Path not found: {path}")
 
     session = SessionLocal()
     stop_event = Event()
     if loops > 0:
-        # bounded loop support for testing/automation users
         _start_bounded_stop_thread(stop_event, interval=interval, loops=loops)
 
     try:
@@ -44,6 +45,7 @@ def watch_command(
             mode=mode,
             interval_seconds=interval,
             stop_event=stop_event,
+            debounce_seconds=debounce,
         )
     except KeyboardInterrupt:
         stop_event.set()
@@ -56,9 +58,7 @@ def watch_command(
         }
     except Exception as exc:
         session.rollback()
-        if as_json:
-            emit_json_error("watch", "watch_failed", "Watch command failed.", details=str(exc))
-        raise
+        raise WatchError(str(exc)) from exc
     finally:
         session.close()
 
