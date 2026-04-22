@@ -78,3 +78,7 @@ git.sh
 PROJECT_STATUS.md
 GEMINI_TASKS.md
 OPENCODE_TASKS.md
+
+
+.agents/*
+docs/blueprint/PROJECT_HANDOFF_STATUS.md

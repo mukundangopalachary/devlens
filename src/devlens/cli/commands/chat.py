@@ -7,6 +7,7 @@ import typer
 
 from devlens.chat.service import (
     answer_question,
+    answer_question_scoped,
     build_session_memory_summary,
     complete_task,
     delete_task,
@@ -39,10 +40,13 @@ def chat_command(files: FileArgument | None = None) -> None:
         typer.echo("DevLens Chat")
         typer.echo(
             "commands: :add <path>  :tasks [open|done|all]  :done <id>  :rm <id>  "
-            ":due <id> <days>  :snooze <id> <days>  :sum  :stream on|off  :help  :exit"
+            ":due <id> <days>  :snooze <id> <days>  :scope <path>|off  :debug on|off  "
+            ":sum  :stream on|off  :help  :exit"
         )
         typer.echo(get_chat_status_line())
         streaming_enabled = False
+        debug_retrieval = False
+        retrieval_scope: str | None = None
         while True:
             user_input = typer.prompt("you>").strip()
             if not user_input:
@@ -59,10 +63,31 @@ def chat_command(files: FileArgument | None = None) -> None:
                     ":rm <id> remove task\n"
                     ":due <id> <days> move due date forward from now\n"
                     ":snooze <id> <days> hide task until later\n"
+                    ":scope <path>|off set retrieval file scope\n"
+                    ":debug on|off toggle retrieval debug output\n"
                     ":sum print session memory summary\n"
                     ":stream on|off toggle token stream mode\n"
                     ":exit quit chat"
                 )
+                continue
+            if user_input.startswith(":scope "):
+                raw_scope = user_input[7:].strip()
+                if raw_scope.lower() == "off":
+                    retrieval_scope = None
+                    typer.echo("retrieval scope cleared")
+                elif raw_scope:
+                    retrieval_scope = raw_scope
+                    typer.echo(f"retrieval scope set: {retrieval_scope}")
+                else:
+                    typer.echo("usage: :scope <path>|off")
+                continue
+            if user_input.startswith(":debug "):
+                mode = user_input[7:].strip().lower()
+                if mode in {"on", "off"}:
+                    debug_retrieval = mode == "on"
+                    typer.echo(f"retrieval debug {'enabled' if debug_retrieval else 'disabled'}")
+                else:
+                    typer.echo("usage: :debug on|off")
                 continue
             if user_input == ":sum":
                 typer.echo(build_session_memory_summary(session, session_id=session_id))
@@ -145,7 +170,17 @@ def chat_command(files: FileArgument | None = None) -> None:
                 typer.echo("")
                 rendered = reply.reply
             else:
-                reply = answer_question(session, session_id=session_id, question=user_input)
+                if retrieval_scope is not None or debug_retrieval:
+                    reply, retrieval_debug = answer_question_scoped(
+                        session,
+                        session_id=session_id,
+                        question=user_input,
+                        file_path=retrieval_scope,
+                        debug_retrieval=debug_retrieval,
+                    )
+                else:
+                    reply = answer_question(session, session_id=session_id, question=user_input)
+                    retrieval_debug = []
                 rendered = reply.reply
                 typer.echo("")
                 typer.echo("agent>")
@@ -158,6 +193,13 @@ def chat_command(files: FileArgument | None = None) -> None:
                 typer.echo(f"[error] {reply.error_reason}")
             if reply.error_code:
                 typer.echo(f"[error_code] {reply.error_code}")
+            if retrieval_debug:
+                typer.echo("[retrieval_debug]")
+                for row in retrieval_debug:
+                    typer.echo(
+                        f"- {row['file_path']}#chunk{row['chunk_index']} score={row['score']} "
+                        f"terms={row['matched_terms']}"
+                    )
             if reply.fallback_used:
                 typer.echo("[mode] fallback")
             else:
