@@ -8,6 +8,7 @@ from devlens.cli.commands.feedback import feedback_command
 from devlens.cli.commands.history import history_command
 from devlens.cli.commands.ingest import ingest_command
 from devlens.cli.commands.reindex import reindex_command
+from devlens.cli.commands.report import report_command
 from devlens.cli.commands.sessions import sessions_command
 from devlens.cli.commands.skills import skills_command
 from devlens.cli.commands.smoke_test import smoke_test_command
@@ -25,6 +26,7 @@ app.command("chat")(chat_command)
 app.command("doctor")(doctor_command)
 app.command("ingest")(ingest_command)
 app.command("reindex")(reindex_command)
+app.command("report")(report_command)
 app.command("history")(history_command)
 app.command("sessions")(sessions_command)
 app.command("skills")(skills_command)
