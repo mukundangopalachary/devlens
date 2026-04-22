@@ -16,6 +16,7 @@ from devlens.config import get_settings
 from devlens.core.schemas import ChatReply, ScheduledTaskPayload, StaticAnalysisMetrics
 from devlens.ingestion.file_scanner import scan_specific_files
 from devlens.retrieval.qdrant_store import qdrant_available
+from devlens.security.path_guard import ensure_within_root
 from devlens.storage.repositories.chat import (
     add_chat_message,
     create_chat_session,
@@ -29,6 +30,7 @@ from devlens.storage.repositories.knowledge import (
     mark_task_done,
     remove_task,
     retrieve_relevant_chunks,
+    retrieve_relevant_chunks_with_debug,
     snooze_task,
     update_task_due,
     upsert_knowledge_document,
@@ -167,6 +169,142 @@ def answer_question(session: Session, session_id: int, question: str) -> ChatRep
     _refresh_session_memory_summary(session, session_id=session_id)
     session.commit()
     return reply
+
+
+def answer_question_scoped(
+    session: Session,
+    *,
+    session_id: int,
+    question: str,
+    file_path: str | None,
+    debug_retrieval: bool,
+) -> tuple[ChatReply, list[dict[str, object]]]:
+    settings = get_settings()
+    debug_rows: list[dict[str, object]] = []
+    normalized_scope = _normalize_file_scope(file_path, settings.resolved_project_root)
+    retrieval_session_id = session_id
+    try:
+        if debug_retrieval:
+            chunks, debug_rows = retrieve_relevant_chunks_with_debug(
+                session,
+                question,
+                limit=2,
+                file_path=normalized_scope,
+                project_root=str(settings.resolved_project_root),
+                session_id=retrieval_session_id,
+            )
+        else:
+            chunks = retrieve_relevant_chunks(
+                session,
+                question,
+                limit=2,
+                file_path=normalized_scope,
+                project_root=str(settings.resolved_project_root),
+                session_id=retrieval_session_id,
+            )
+    except OperationalError as exc:
+        retrieval_error = _migration_hint_from_error(str(exc))
+        reply = ChatReply(
+            reply=_fallback_chat_reply(question, []),
+            fallback_used=True,
+            matched_chunks=[],
+            citations=[],
+            error_reason=retrieval_error,
+            error_code=_classify_error_code(retrieval_error),
+        )
+        return reply, debug_rows
+
+    context = _build_context(chunks)
+    history = list_recent_messages(session, session_id=session_id, limit=4)
+    history_text = _build_history_text(history)
+    memory_summary = build_session_memory_summary(session, session_id=session_id)
+    prompt = (
+        "You are DevLens local-first engineering coach. "
+        "Give practical, code-aware help. Be explicit when context weak. "
+        "If context supports claims, reference citations exactly as [path#chunk].\n\n"
+        f"Session memory summary:\n{memory_summary}\n\n"
+        f"Conversation history:\n{history_text}\n\n"
+        f"Knowledge context:\n{context}\n\n"
+        f"User question: {question}"
+    )
+    prompt_hash = build_prompt_hash("chat", settings.ollama_model, prompt)
+    cached = get_cached_response(session, prompt_hash, cache_kind="chat")
+    if cached is not None:
+        cached_reply = _parse_cached_chat_reply(cached)
+        reply = ChatReply(
+            reply=str(cached_reply["reply"]),
+            fallback_used=bool(cached_reply["fallback_used"]),
+            matched_chunks=_unique_paths(chunks),
+            citations=_citation_labels(chunks),
+            error_reason=None,
+            error_code=None,
+        )
+        add_chat_message(session, session_id, "user", question)
+        add_chat_message(session, session_id, "assistant", reply.reply)
+        session.commit()
+        return reply, debug_rows
+
+    try:
+        response = ollama.chat(
+            model=settings.ollama_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Use citations [path#chunk] when context supports answer.",
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            options={
+                "temperature": 0.2,
+                "num_ctx": settings.ollama_num_ctx,
+                "num_predict": settings.ollama_chat_num_predict,
+            },
+            keep_alive=settings.ollama_keep_alive,
+            stream=False,
+        )
+        reply_text = _extract_chat_text(response)
+        if not reply_text:
+            raise ValueError("Empty chat response.")
+        reply_text = _enforce_citation_presence(reply_text, _citation_labels(chunks))
+        if settings.cache_enabled:
+            store_cached_response(
+                session=session,
+                prompt_hash=prompt_hash,
+                cache_kind="chat",
+                model_name=settings.ollama_model,
+                prompt_text=prompt,
+                response_text=json.dumps(
+                    {"reply": reply_text, "fallback_used": False, "error_code": None},
+                    sort_keys=True,
+                ),
+            )
+        reply = ChatReply(
+            reply=reply_text,
+            fallback_used=False,
+            matched_chunks=_unique_paths(chunks),
+            citations=_citation_labels(chunks),
+            error_reason=None,
+            error_code=None,
+        )
+    except Exception as exc:
+        reason = str(exc)
+        reply = ChatReply(
+            reply=_fallback_chat_reply(question, chunks),
+            fallback_used=True,
+            matched_chunks=_unique_paths(chunks),
+            citations=_citation_labels(chunks),
+            error_reason=reason,
+            error_code=_classify_error_code(reason),
+        )
+
+    add_chat_message(session, session_id, "user", question)
+    add_chat_message(session, session_id, "assistant", reply.reply)
+    _refresh_session_memory_summary(session, session_id=session_id)
+    session.commit()
+    return reply, debug_rows
 
 
 def get_task_lines(session: Session, limit: int = 10, status: str = "open") -> list[str]:
@@ -632,6 +770,25 @@ def _expand_add_paths(file_paths: list[Path]) -> list[Path]:
             continue
         expanded.append(candidate)
     return expanded
+
+
+def _normalize_file_scope(file_path: str | None, project_root: Path) -> str | None:
+    if file_path is None:
+        return None
+    raw = file_path.strip()
+    if not raw:
+        return None
+    candidate = Path(raw[1:]) if raw.startswith("@") else Path(raw)
+    # Try resolving within project root first
+    try:
+        safe_path = ensure_within_root(candidate, project_root)
+        relative = str(safe_path.relative_to(project_root))
+        if relative:
+            return relative
+    except (ValueError, Exception):
+        pass
+    # Fallback: use the raw path string for substring matching
+    return str(candidate)
 
 
 def _filter_tasks(tasks: Sequence[ScheduledTask], *, status: str) -> list[ScheduledTask]:

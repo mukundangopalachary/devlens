@@ -120,7 +120,10 @@ def retrieve_relevant_chunks(
         .order_by(KnowledgeDocument.updated_at.desc())
     )
     if file_path is not None:
-        statement = statement.where(KnowledgeDocument.file_path == file_path)
+        statement = statement.where(
+            KnowledgeDocument.file_path.contains(file_path)
+            | KnowledgeDocument.file_path.endswith(file_path)
+        )
     if project_root is not None:
         statement = statement.where(KnowledgeDocument.project_root == project_root)
     if session_id is not None:
@@ -133,6 +136,61 @@ def retrieve_relevant_chunks(
         scored.append((document, chunk, score))
     scored.sort(key=lambda item: item[2], reverse=True)
     return scored[:limit]
+
+
+def retrieve_relevant_chunks_with_debug(
+    session: Session,
+    query: str,
+    limit: int = 4,
+    *,
+    file_path: str | None = None,
+    project_root: str | None = None,
+    session_id: int | None = None,
+) -> tuple[list[tuple[KnowledgeDocument, KnowledgeChunk, float]], list[dict[str, object]]]:
+    chunks = retrieve_relevant_chunks(
+        session,
+        query,
+        limit=limit,
+        file_path=file_path,
+        project_root=project_root,
+        session_id=session_id,
+    )
+    debug_rows: list[dict[str, object]] = []
+    query_terms = sorted({term for term in query.lower().split() if term})
+
+    for document, chunk, score in chunks:
+        chunk_text_lower = chunk.content.lower()
+        matched_terms = [term for term in query_terms if term in chunk_text_lower]
+        debug_rows.append(
+            {
+                "file_path": document.file_path,
+                "chunk_index": chunk.chunk_index,
+                "score": round(float(score), 6),
+                "matched_terms": matched_terms[:10],
+                "reason": _debug_reason(
+                    matched_terms,
+                    float(score),
+                    document.file_path,
+                    chunk.chunk_index,
+                ),
+            }
+        )
+
+    return chunks, debug_rows
+
+
+def _debug_reason(
+    matched_terms: list[str],
+    score: float,
+    file_path: str,
+    chunk_index: int,
+) -> str:
+    if matched_terms:
+        return (
+            f"matched terms {matched_terms[:5]} in {file_path}#chunk{chunk_index}; "
+            f"score={round(score, 4)}"
+        )
+    return f"semantic/vector rank from {file_path}#chunk{chunk_index}; score={round(score, 4)}"
 
 
 def _hydrate_qdrant_results(

@@ -188,7 +188,7 @@ def _build_query_filter(
     must: list[Any] = []
     if file_path is not None:
         must.append(
-            models.FieldCondition(key="file_path", match=models.MatchValue(value=file_path))
+            models.FieldCondition(key="file_path", match=models.MatchText(text=file_path))
         )
     if project_root is not None:
         must.append(
