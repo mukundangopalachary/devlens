@@ -8,6 +8,16 @@ from devlens.core.schemas import FileAnalysisResult, StaticAnalysisMetrics
 from devlens.ingestion.file_scanner import FileScanResult
 
 
+class PythonAnalyzer:
+    """Static analyzer for Python files."""
+
+    def analyze(self, scan_result: FileScanResult) -> FileAnalysisResult:
+        return analyze_python_file(scan_result)
+
+    def supported_extensions(self) -> tuple[str, ...]:
+        return (".py",)
+
+
 def analyze_python_file(scan_result: FileScanResult) -> FileAnalysisResult:
     try:
         tree = ast.parse(scan_result.content, filename=str(scan_result.file_path))
