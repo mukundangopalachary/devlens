@@ -39,6 +39,7 @@ type model struct {
 	taskLines     []string
 	skillLines    []string
 	errorLine     string
+	errorHistory  []string
 	sessions      []sessionItem
 	selectedIndex int
 	activeSession int
@@ -46,6 +47,16 @@ type model struct {
 	showHelp      bool
 	ingestInput   string
 	showIngest    bool
+	// Scrolling
+	chatScroll    int
+	contextScroll int
+	taskScroll    int
+	skillScroll   int
+	// Loading
+	loading map[string]bool
+	// Task selection
+	taskSelectedIdx int
+	taskIDs         []int
 }
 
 type sessionItem struct {
@@ -64,10 +75,14 @@ func newModel() model {
 		skillLines:    []string{"No skills loaded yet."},
 		sessions:      []sessionItem{{id: 1, title: "session-1", when: "unknown"}},
 		activeSession: 1,
+		loading:       map[string]bool{},
 	}
 }
 
 func (m model) Init() tea.Cmd {
+	m.loading["tasks"] = true
+	m.loading["skills"] = true
+	m.loading["sessions"] = true
 	return tea.Batch(
 		fetchCommand("tasks", []string{"tasks", "--json"}),
 		fetchCommand("skills", []string{"skills", "--json"}),
@@ -84,8 +99,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	case commandResultMsg:
+		delete(m.loading, msg.name)
 		if msg.err != nil {
-			m.errorLine = fmt.Sprintf("%s failed: %v", msg.name, msg.err)
+			errMsg := fmt.Sprintf("%s failed: %v", msg.name, msg.err)
+			m.errorLine = errMsg
+			m.errorHistory = append(m.errorHistory, errMsg)
+			if len(m.errorHistory) > 20 {
+				m.errorHistory = m.errorHistory[1:]
+			}
 			return m, nil
 		}
 		m.consumeCommandResult(msg)
@@ -96,6 +117,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Text input for ingest/chat
 	if msg.Type == tea.KeyRunes {
 		value := string(msg.Runes)
 		if m.showIngest {
@@ -111,6 +133,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+	case "esc":
+		m.showPicker = false
+		m.showHelp = false
+		m.showIngest = false
+		return m, nil
 	case "tab":
 		m.focus = (m.focus + 1) % 5
 		return m, nil
@@ -131,19 +158,75 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = false
 		m.showPicker = false
 		return m, nil
+	case "ctrl+a":
+		m.statusLine = "analyze request sent"
+		m.loading["analyze"] = true
+		return m, fetchCommand("analyze", []string{"analyze", ".", "--json"})
 	case "?", "f1":
 		m.showHelp = !m.showHelp
 		m.showPicker = false
 		m.showIngest = false
 		return m, nil
-	case "down":
-		if m.showPicker && m.selectedIndex < len(m.sessions)-1 {
-			m.selectedIndex++
+	case "j", "down":
+		if m.showPicker {
+			if m.selectedIndex < len(m.sessions)-1 {
+				m.selectedIndex++
+			}
+			return m, nil
+		}
+		if m.focus == paneTasks && len(m.taskIDs) > 0 {
+			if m.taskSelectedIdx < len(m.taskIDs)-1 {
+				m.taskSelectedIdx++
+			}
+			return m, nil
+		}
+		m.scrollDown()
+		return m, nil
+	case "k", "up":
+		if m.showPicker {
+			if m.selectedIndex > 0 {
+				m.selectedIndex--
+			}
+			return m, nil
+		}
+		if m.focus == paneTasks && len(m.taskIDs) > 0 {
+			if m.taskSelectedIdx > 0 {
+				m.taskSelectedIdx--
+			}
+			return m, nil
+		}
+		m.scrollUp()
+		return m, nil
+	case "pgdown":
+		for i := 0; i < 5; i++ {
+			m.scrollDown()
 		}
 		return m, nil
-	case "up":
-		if m.showPicker && m.selectedIndex > 0 {
-			m.selectedIndex--
+	case "pgup":
+		for i := 0; i < 5; i++ {
+			m.scrollUp()
+		}
+		return m, nil
+	case "d":
+		if m.focus == paneTasks && len(m.taskIDs) > 0 {
+			taskID := m.taskIDs[m.taskSelectedIdx]
+			m.statusLine = fmt.Sprintf("marking task #%d done", taskID)
+			m.loading["tasks"] = true
+			return m, tea.Batch(
+				fetchCommand("task-done", []string{"tasks", "--done", fmt.Sprintf("%d", taskID), "--json"}),
+				fetchCommand("tasks", []string{"tasks", "--json"}),
+			)
+		}
+		return m, nil
+	case "x":
+		if m.focus == paneTasks && len(m.taskIDs) > 0 {
+			taskID := m.taskIDs[m.taskSelectedIdx]
+			m.statusLine = fmt.Sprintf("removing task #%d", taskID)
+			m.loading["tasks"] = true
+			return m, tea.Batch(
+				fetchCommand("task-remove", []string{"tasks", "--remove", fmt.Sprintf("%d", taskID), "--json"}),
+				fetchCommand("tasks", []string{"tasks", "--json"}),
+			)
 		}
 		return m, nil
 	case "enter":
@@ -161,6 +244,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.statusLine = "ingest request sent"
 			m.showIngest = false
+			m.loading["ingest"] = true
 			cmd := fetchCommand("ingest", []string{"ingest", target, "--json"})
 			m.ingestInput = ""
 			return m, cmd
@@ -170,13 +254,18 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.chatLog = append(m.chatLog, "you> "+m.chatInput)
 		m.statusLine = "chat request sent"
+		m.loading["ask"] = true
 		cmd := fetchCommand(
 			"ask",
 			[]string{"ask", m.chatInput, "--session-id", fmt.Sprintf("%d", m.activeSession), "--json"},
 		)
 		m.chatInput = ""
+		m.chatScroll = max(0, len(m.chatLog)-10)
 		return m, cmd
 	case "ctrl+r":
+		m.loading["tasks"] = true
+		m.loading["skills"] = true
+		m.loading["sessions"] = true
 		return m, tea.Batch(
 			fetchCommand("tasks", []string{"tasks", "--json"}),
 			fetchCommand("skills", []string{"skills", "--json"}),
@@ -207,12 +296,62 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m *model) scrollDown() {
+	switch m.focus {
+	case paneChat:
+		if m.chatScroll < len(m.chatLog)-1 {
+			m.chatScroll++
+		}
+	case paneContext:
+		if m.contextScroll < len(m.contextLines)-1 {
+			m.contextScroll++
+		}
+	case paneTasks:
+		if m.taskScroll < len(m.taskLines)-1 {
+			m.taskScroll++
+		}
+	case paneSkills:
+		if m.skillScroll < len(m.skillLines)-1 {
+			m.skillScroll++
+		}
+	}
+}
+
+func (m *model) scrollUp() {
+	switch m.focus {
+	case paneChat:
+		if m.chatScroll > 0 {
+			m.chatScroll--
+		}
+	case paneContext:
+		if m.contextScroll > 0 {
+			m.contextScroll--
+		}
+	case paneTasks:
+		if m.taskScroll > 0 {
+			m.taskScroll--
+		}
+	case paneSkills:
+		if m.skillScroll > 0 {
+			m.skillScroll--
+		}
+	}
+}
+
 func (m *model) consumeCommandResult(msg commandResultMsg) {
 	if msg.name == "tasks" {
 		m.taskLines = readLinesFromJSON(msg.content, "data.items", "title")
+		m.taskIDs = readIDsFromJSON(msg.content, "data.items")
 		if len(m.taskLines) == 0 {
 			m.taskLines = []string{"No tasks"}
+			m.taskIDs = nil
 		}
+		if m.taskSelectedIdx >= len(m.taskIDs) && len(m.taskIDs) > 0 {
+			m.taskSelectedIdx = len(m.taskIDs) - 1
+		}
+		return
+	}
+	if msg.name == "task-done" || msg.name == "task-remove" {
 		return
 	}
 	if msg.name == "skills" {
@@ -234,6 +373,7 @@ func (m *model) consumeCommandResult(msg commandResultMsg) {
 			m.contextLines = citations
 		}
 		m.statusLine = "chat response received"
+		m.chatScroll = max(0, len(m.chatLog)-10)
 		return
 	}
 	if msg.name == "sessions" {
@@ -251,33 +391,120 @@ func (m *model) consumeCommandResult(msg commandResultMsg) {
 		m.statusLine = fmt.Sprintf("ingested %d file(s)", loaded)
 		return
 	}
+	if msg.name == "analyze" {
+		analyzed := readIntFromJSON(msg.content, "data.files_analyzed")
+		m.statusLine = fmt.Sprintf("analyzed %d file(s)", analyzed)
+		return
+	}
+}
+
+func visibleSlice(lines []string, offset int, maxLines int) []string {
+	if offset >= len(lines) {
+		offset = max(0, len(lines)-1)
+	}
+	end := offset + maxLines
+	if end > len(lines) {
+		end = len(lines)
+	}
+	return lines[offset:end]
 }
 
 func (m model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "Initializing TUI..."
 	}
-	panelStyle := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(0, 1)
-	focusStyle := lipgloss.NewStyle().BorderForeground(lipgloss.Color("42"))
 
-	chat := panelStyle.Width(m.width / 2).Render(
-		strings.Join(append(m.chatLog, "", "input> "+m.chatInput), "\n"),
-	)
-	if m.focus == paneChat {
-		chat = focusStyle.Width(m.width / 2).Render(chat)
+	accentColor := lipgloss.Color("42")
+	errColor := lipgloss.Color("196")
+	dimColor := lipgloss.Color("240")
+
+	panelStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	focusStyle := panelStyle.BorderForeground(accentColor)
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(accentColor)
+	loadingStyle := lipgloss.NewStyle().Foreground(dimColor).Italic(true)
+	errStyle := lipgloss.NewStyle().Foreground(errColor).Bold(true)
+
+	paneHeight := max(4, (m.height-6)/4)
+	chatHeight := max(6, m.height-6)
+
+	// Chat pane
+	chatVisible := visibleSlice(m.chatLog, m.chatScroll, chatHeight-3)
+	chatContent := strings.Join(append(chatVisible, "", "input> "+m.chatInput), "\n")
+	chatHeader := headerStyle.Render("Chat")
+	if m.loading["ask"] {
+		chatHeader += " " + loadingStyle.Render("⟳")
 	}
+	style := panelStyle
+	if m.focus == paneChat {
+		style = focusStyle
+	}
+	chat := style.Width(m.width/2).Height(chatHeight).Render(chatHeader + "\n" + chatContent)
 
 	rightWidth := m.width - (m.width / 2) - 4
-	context := panelStyle.Width(rightWidth).Render("Context\n" + strings.Join(m.contextLines, "\n"))
-	tasks := panelStyle.Width(rightWidth).Render("Tasks\n" + strings.Join(m.taskLines, "\n"))
-	skills := panelStyle.Width(rightWidth).Render("Skills\n" + strings.Join(m.skillLines, "\n"))
-	status := panelStyle.Width(rightWidth).Render("Status\n" + m.statusLine + "\n" + m.errorLine)
+
+	// Context pane
+	ctxHeader := headerStyle.Render("Context")
+	ctxVisible := visibleSlice(m.contextLines, m.contextScroll, paneHeight-1)
+	ctxStyle := panelStyle
+	if m.focus == paneContext {
+		ctxStyle = focusStyle
+	}
+	context := ctxStyle.Width(rightWidth).Height(paneHeight).Render(ctxHeader + "\n" + strings.Join(ctxVisible, "\n"))
+
+	// Tasks pane
+	taskHeader := headerStyle.Render("Tasks")
+	if m.loading["tasks"] {
+		taskHeader += " " + loadingStyle.Render("⟳")
+	}
+	taskVisible := visibleSlice(m.taskLines, m.taskScroll, paneHeight-1)
+	taskRendered := make([]string, len(taskVisible))
+	for i, line := range taskVisible {
+		globalIdx := m.taskScroll + i
+		if m.focus == paneTasks && globalIdx == m.taskSelectedIdx {
+			taskRendered[i] = "> " + line
+		} else {
+			taskRendered[i] = "  " + line
+		}
+	}
+	if m.focus == paneTasks && len(m.taskIDs) > 0 {
+		taskHeader += loadingStyle.Render(" [d]one [x]rm")
+	}
+	tStyle := panelStyle
+	if m.focus == paneTasks {
+		tStyle = focusStyle
+	}
+	tasks := tStyle.Width(rightWidth).Height(paneHeight).Render(taskHeader + "\n" + strings.Join(taskRendered, "\n"))
+
+	// Skills pane
+	skillHeader := headerStyle.Render("Skills")
+	if m.loading["skills"] {
+		skillHeader += " " + loadingStyle.Render("⟳")
+	}
+	skillVisible := visibleSlice(m.skillLines, m.skillScroll, paneHeight-1)
+	sStyle := panelStyle
+	if m.focus == paneSkills {
+		sStyle = focusStyle
+	}
+	skills := sStyle.Width(rightWidth).Height(paneHeight).Render(skillHeader + "\n" + strings.Join(skillVisible, "\n"))
+
+	// Status pane
+	statusHeader := headerStyle.Render("Status")
+	statusContent := m.statusLine
+	if m.errorLine != "" {
+		statusContent += "\n" + errStyle.Render("ERR: "+m.errorLine)
+	}
+	stStyle := panelStyle
+	if m.focus == paneStatus {
+		stStyle = focusStyle
+	}
+	status := stStyle.Width(rightWidth).Height(paneHeight).Render(statusHeader + "\n" + statusContent)
 
 	right := lipgloss.JoinVertical(lipgloss.Top, context, tasks, skills, status)
 	main := lipgloss.JoinHorizontal(lipgloss.Top, chat, right)
 
+	// Overlays
 	if m.showPicker {
-		pickerLines := []string{"Session Picker"}
+		pickerLines := []string{headerStyle.Render("Session Picker")}
 		for idx, session := range m.sessions {
 			prefix := "  "
 			if idx == m.selectedIndex {
@@ -288,31 +515,43 @@ func (m model) View() string {
 				fmt.Sprintf("%s#%d %s (%s)", prefix, session.id, session.title, session.when),
 			)
 		}
-		picker := panelStyle.Width(m.width - 4).Render(strings.Join(pickerLines, "\n"))
+		picker := focusStyle.Width(m.width - 4).Render(strings.Join(pickerLines, "\n"))
 		return lipgloss.JoinVertical(lipgloss.Top, main, picker)
 	}
 
 	if m.showIngest {
-		ingest := panelStyle.Width(m.width - 4).Render(
-			"Ingest Picker\nEnter file path and press Enter\n" + m.ingestInput,
+		ingest := focusStyle.Width(m.width - 4).Render(
+			headerStyle.Render("Ingest Picker") + "\nEnter file path and press Enter\n" + m.ingestInput,
 		)
 		return lipgloss.JoinVertical(lipgloss.Top, main, ingest)
 	}
 
 	if m.showHelp {
-		help := panelStyle.Width(m.width - 4).Render(strings.Join([]string{
-			"Shortcuts",
-			"q: quit",
+		help := focusStyle.Width(m.width - 4).Render(strings.Join([]string{
+			headerStyle.Render("Shortcuts"),
+			"q: quit              esc: close overlay",
 			"tab / shift+tab: switch focus pane",
+			"j/k or ↑/↓: scroll / select task",
+			"pgup/pgdown: fast scroll",
 			"ctrl+r: refresh tasks/skills/sessions",
 			"ctrl+s: session picker",
 			"ctrl+o: ingest file picker",
+			"ctrl+a: analyze project",
+			"d: mark selected task done (tasks pane)",
+			"x: remove selected task (tasks pane)",
 			"?: help toggle",
 		}, "\n"))
 		return lipgloss.JoinVertical(lipgloss.Top, main, help)
 	}
 
 	return main
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func fetchCommand(name string, args []string) tea.Cmd {
@@ -421,6 +660,37 @@ func readLinesFromJSON(content string, arrPath string, key string) []string {
 		lines = append(lines, value)
 	}
 	return lines
+}
+
+func readIDsFromJSON(content string, arrPath string) []int {
+	paths := strings.Split(arrPath, ".")
+	var data map[string]any
+	if err := json.Unmarshal([]byte(content), &data); err != nil {
+		return nil
+	}
+	var current any = data
+	for _, path := range paths {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil
+		}
+		current = obj[path]
+	}
+	rawArr, ok := current.([]any)
+	if !ok {
+		return nil
+	}
+	ids := make([]int, 0, len(rawArr))
+	for _, row := range rawArr {
+		obj, ok := row.(map[string]any)
+		if !ok {
+			continue
+		}
+		if id, ok := obj["id"].(float64); ok {
+			ids = append(ids, int(id))
+		}
+	}
+	return ids
 }
 
 func readIntFromJSON(content string, dottedPath string) int {
