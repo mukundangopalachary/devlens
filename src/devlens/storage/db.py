@@ -27,7 +27,16 @@ engine: Engine = create_db_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 
+_db_initialized: bool = False
+
+
 def get_session() -> Generator[Session, None, None]:
+    global _db_initialized
+    if not _db_initialized:
+        from devlens.storage.tables import init_db
+        init_db(engine)
+        _db_initialized = True
+        
     session = SessionLocal()
     try:
         yield session

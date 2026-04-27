@@ -3,9 +3,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from devlens.storage.db import Base
+
+
+def init_db(engine: Engine) -> None:
+    """Initialize database schema, ensuring all tables exist."""
+    Base.metadata.create_all(engine)
 
 
 def utc_now() -> datetime:
