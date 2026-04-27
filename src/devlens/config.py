@@ -10,7 +10,15 @@ from typing import Final
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-DEFAULT_ALLOWED_EXTENSIONS: Final[tuple[str, ...]] = (".py",)
+DEFAULT_ALLOWED_EXTENSIONS: Final[tuple[str, ...]] = (
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".go",
+    ".java",
+)
 ENV_FILE_NAME: Final[str] = ".env"
 
 
@@ -25,7 +33,7 @@ class Settings(BaseModel):
     qdrant_collection: str = "devlens_knowledge"
     project_root: Path = Path(".")
     max_file_size_kb: int = Field(default=512, ge=1)
-    allowed_extensions_raw: str = ".py"
+    allowed_extensions_raw: str = ".py,.js,.jsx,.ts,.tsx,.go,.java"
     llm_timeout_seconds: int = Field(default=30, ge=1)
     cache_enabled: bool = True
     log_level: str = "INFO"
@@ -90,8 +98,10 @@ def get_settings() -> Settings:
     else:
         project_root = project_root_default
 
-    db_url_default = _default_db_url(project_root)
-    qdrant_path_default = _resolve_path_from_root(project_root, Path("qdrant_storage"))
+    app_dir = Path.home() / ".devlens"
+    app_dir.mkdir(parents=True, exist_ok=True)
+    db_url_default = f"sqlite:///{(app_dir / 'devlens.db').resolve()}"
+    qdrant_path_default = app_dir / "qdrant_storage"
     try:
         return Settings(
             db_url=_normalize_db_url(_env_value("DEVLENS_DB_URL", db_url_default), project_root),
@@ -105,7 +115,9 @@ def get_settings() -> Settings:
             qdrant_collection=_env_value("DEVLENS_QDRANT_COLLECTION", "devlens_knowledge"),
             project_root=project_root,
             max_file_size_kb=_env_int("DEVLENS_MAX_FILE_SIZE_KB", 512),
-            allowed_extensions_raw=_env_value("DEVLENS_ALLOWED_EXTENSIONS", ".py"),
+            allowed_extensions_raw=_env_value(
+                "DEVLENS_ALLOWED_EXTENSIONS", ".py,.js,.jsx,.ts,.tsx,.go,.java"
+            ),
             llm_timeout_seconds=_env_int("DEVLENS_LLM_TIMEOUT_SECONDS", 30),
             cache_enabled=_env_bool("DEVLENS_CACHE_ENABLED", True),
             log_level=_env_value("DEVLENS_LOG_LEVEL", "INFO"),
