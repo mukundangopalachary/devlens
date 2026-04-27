@@ -6,12 +6,12 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from devlens.analysis.llm.client import analyze_with_llm
-from devlens.analysis.static.python_ast import analyze_python_file
+from devlens.analysis.static.registry import get_registry
 from devlens.core.schemas import AnalyzeSummary, FileAnalysisResult, GeneratedFeedback
 from devlens.feedback.critique import build_critique
 from devlens.feedback.questions import generate_questions
 from devlens.feedback.tasks import generate_tasks
-from devlens.ingestion.file_scanner import FileScanResult, scan_python_files, scan_specific_files
+from devlens.ingestion.file_scanner import FileScanResult, scan_specific_files, scan_supported_files
 from devlens.ingestion.git_diff import get_changed_files
 from devlens.skills.mistakes import infer_mistake_patterns
 from devlens.skills.scorer import score_skills
@@ -32,7 +32,7 @@ def run_static_analysis(
     target_path: Path,
     session: Session,
 ) -> tuple[AnalyzeSummary, list[FileAnalysisResult]]:
-    scan_results = scan_python_files(target_path)
+    scan_results = scan_supported_files(target_path)
     return _run_analysis_for_scan_results(scan_results=scan_results, session=session)
 
 
@@ -87,7 +87,10 @@ def _run_analysis_for_scan_results(
         )
         submissions_saved += 1
 
-        analysis = analyze_python_file(scan_result)
+        registry = get_registry()
+        analyzer = registry.get_analyzer(scan_result.file_path.suffix)
+        analysis = analyzer.analyze(scan_result)
+
         llm_result = analyze_with_llm(
             session=session,
             source=scan_result.content,

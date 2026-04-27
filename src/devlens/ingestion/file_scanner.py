@@ -31,7 +31,7 @@ class FileScanResult:
     source_type: str = "filesystem"
 
 
-def scan_python_files(target_path: Path) -> list[FileScanResult]:
+def scan_supported_files(target_path: Path) -> list[FileScanResult]:
     settings = get_settings()
     project_root = settings.resolved_project_root
     safe_target = ensure_within_root(target_path, project_root)
