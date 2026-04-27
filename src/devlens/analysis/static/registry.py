@@ -57,6 +57,7 @@ def get_registry() -> AnalyzerRegistry:
 def _build_default_registry() -> AnalyzerRegistry:
     from devlens.analysis.static.generic_analyzer import GenericAnalyzer
     from devlens.analysis.static.go_analyzer import GoAnalyzer
+    from devlens.analysis.static.java_analyzer import JavaAnalyzer
     from devlens.analysis.static.javascript_analyzer import JavaScriptAnalyzer
     from devlens.analysis.static.python_ast import PythonAnalyzer
 
@@ -64,5 +65,6 @@ def _build_default_registry() -> AnalyzerRegistry:
     registry.register(PythonAnalyzer())
     registry.register(JavaScriptAnalyzer())
     registry.register(GoAnalyzer())
+    registry.register(JavaAnalyzer())
     registry.set_generic(GenericAnalyzer())
     return registry
