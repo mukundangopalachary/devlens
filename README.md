@@ -13,38 +13,27 @@ Default model tuned for low-RAM setups: `gemma2:2b`.
 - `ast`, `libcst`, `radon`
 - Ollama
 
-## Bootstrap
+## Installation
+
+DevLens is designed to be installed as a system-wide command line tool.
+
+1. Clone the repository and enter the directory.
+2. Run the `make install` command to globally install DevLens via `uv`:
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv sync
-cp .env.example .env
+make install
 ```
 
-Run CLI:
+This isolates dependencies and exposes the `devlens` command globally. You can now run `devlens` from any directory!
 
-```bash
-uv run devlens --help
-```
-
-From any directory:
-
-```bash
-uv tool install . --editable --force
-devlens --help
-```
-
-If command not in PATH, use:
-
+If the command isn't in your PATH, you can run:
 ```bash
 uvx --from . devlens --help
 ```
 
-One-command bootstrap:
-
+To just bootstrap the environment locally without a global install:
 ```bash
-bash scripts/bootstrap.sh
+make bootstrap
 ```
 
 Environment verification:

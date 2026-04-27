@@ -1,7 +1,10 @@
-.PHONY: bootstrap verify doctor smoke lint type test package-test check start start-chat tui bundle clean
+.PHONY: bootstrap install verify doctor smoke lint type test package-test check start start-chat tui bundle clean
 
 bootstrap:
 	bash scripts/bootstrap.sh
+
+install:
+	uv tool install . --editable --force
 
 verify:
 	uv run devlens verify-env
